@@ -1,11 +1,9 @@
 using UnityEngine;
 using Rect = UnityEngine.Rect;
-using OpenCVForUnity;
 using System;
 using OpenCVForUnity.CoreModule;
 using OpenCVForUnity.ImgprocModule;
 using OpenCVForUnity.UnityUtils;
-using UnityEditor;
 using UnityEngine.InputSystem;
 using ViveSR.anipal.Eye;
 using EyeFramework = ViveSR.anipal.Eye.SRanipal_Eye_Framework;
@@ -54,16 +52,9 @@ namespace Xarphos.Scripts
         [SerializeField] float trace_increase = 0.1f;
         [SerializeField] float trace_decay = 0.9f;
 
-        protected bool cannyFiltering;
-        
-        // Added for Eye Tracking Implementation
-        [SerializeField] private Camera simCam;
-        private bool _eyeTrackingEnabled;
+        protected bool cannyFiltering = true;
 
-        private void Start()
-        {
-            _eyeTrackingEnabled = SRanipal_Eye_Framework.Instance.EnableEye;
-        }
+        private DSPVEyeTracking _eyeTracking;
 
         protected void Awake()
         {
@@ -71,14 +62,6 @@ namespace Xarphos.Scripts
             GetComponent<Renderer>().material = Material = new Material(shader);
             
             int w = 512, h = 512;
-            // Grab current screen size
-            // w = Screen.width;
-            // h = Screen.height;
-
-            // adjust Quad size
-            // var fac = Gcf(w, h);
-            // gameObject.transform.localScale = new Vector3(w/fac, h/fac, 1);
-            
             input_texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
 
             // Initialize virtual camera
@@ -117,6 +100,9 @@ namespace Xarphos.Scripts
             in_mat = new Mat(w, h, CvType.CV_8UC4, new Scalar(0, 0, 0, 255));
             out_mat = new Mat(w, h, CvType.CV_8UC4, new Scalar(0, 0, 0, 255));
             dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(9, 9));
+            
+            // check for eye tracking script
+            _eyeTracking ??= GetComponent<DSPVEyeTracking>();
         }
 
 
@@ -124,8 +110,9 @@ namespace Xarphos.Scripts
         {
             ProcessImageAndUpdatePhosphenes();
             ProcessKeyboardInput();
-            if (_eyeTrackingEnabled)
-                EyeTrackingStep();
+            if (_eyeTracking != null && _eyeTracking.EyeTrackingAvailable)
+                if (!_eyeTracking.EyeTrackingStep(out eyePosition))
+                    ProcessManualEyePosition();
 
             Material.SetVector("_EyePosition", eyePosition);
             Material.SetInt("_GazeLocked", gazeLocking);
@@ -159,14 +146,14 @@ namespace Xarphos.Scripts
 
             if (Keyboard.current.gKey.isPressed)
             {
-                gazeLocking = 1-gazeLocking;
+                gazeLocking = 1 - gazeLocking;
             }
 
             if (Keyboard.current.cKey.isPressed)
             {
                 camLocking = !camLocking;
             }
-            
+
             if (Keyboard.current.escapeKey.isPressed)
             {
 #if UNITY_EDITOR
@@ -175,9 +162,10 @@ namespace Xarphos.Scripts
                 Application.Quit();
 #endif
             }
-
-            if (_eyeTrackingEnabled) return;
-
+        }
+        
+        private void ProcessManualEyePosition()
+        {
             if (Keyboard.current.upArrowKey.isPressed || Keyboard.current.downArrowKey.isPressed)
             {
                 if (Keyboard.current.upArrowKey.isPressed) {eyePosition.y = 0.8f;}
@@ -263,41 +251,5 @@ namespace Xarphos.Scripts
             Material.SetFloatArray("activation", activation);
             Material.SetVectorArray("_pSpecs", phospheneSpecs);
         }
-
-        private void EyeTrackingStep()
-        {
-            if (CheckFrameworkStatusErrors())
-            {
-                return;
-            }
-            VerboseData vData;
-            SRanipal_Eye_v2.GetVerboseData(out vData);
-            var gazeDir = vData.combined.eye_data.gaze_direction_normalized;
-            gazeDir.x *= -1; // ToDo: This should not be necessary? Why is ray mirrored?
-
-            RaycastHit hit;
-            if (Physics.Raycast(simCam.transform.position, gazeDir, out hit))
-            {
-                eyePosition = hit.textureCoord;
-            }
-        }
-        
-        private bool CheckFrameworkStatusErrors()
-        {
-            return EyeFramework.Status != EyeFramework.FrameworkStatus.WORKING &&
-                   EyeFramework.Status != EyeFramework.FrameworkStatus.NOT_SUPPORT;
-        }
-        
-        private int Gcf(int a, int b)
-        {
-            while (b != 0)
-            {
-                int temp = b;
-                b = a % b;
-                a = temp;
-            }
-            return a;
-        }
-
     }
 }
