@@ -60,7 +60,7 @@ namespace Xarphos.Scripts
         {
             // Initialize material, input texture and shader
             GetComponent<Renderer>().material = Material = new Material(shader);
-            
+
             int w = 512, h = 512;
             input_texture = new Texture2D(w, h, TextureFormat.RGBA32, false);
 
@@ -100,9 +100,9 @@ namespace Xarphos.Scripts
             in_mat = new Mat(w, h, CvType.CV_8UC4, new Scalar(0, 0, 0, 255));
             out_mat = new Mat(w, h, CvType.CV_8UC4, new Scalar(0, 0, 0, 255));
             dilateElement = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(9, 9));
-            
+
             // check for eye tracking script
-            _eyeTracking ??= GetComponent<DSPVEyeTracking>();
+            _eyeTracking ?? GetComponent<DSPVEyeTracking>();
         }
 
 
@@ -163,7 +163,7 @@ namespace Xarphos.Scripts
 #endif
             }
         }
-        
+
         private void ProcessManualEyePosition()
         {
             if (Keyboard.current.upArrowKey.isPressed || Keyboard.current.downArrowKey.isPressed)
@@ -189,7 +189,7 @@ namespace Xarphos.Scripts
 
         private void ProcessImageAndUpdatePhosphenes()
         {
-            
+
             // IMAGE PREPROCESSING
 
             //1.Get texture (webcam, or in this case: virtual camera)
