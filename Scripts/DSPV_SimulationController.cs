@@ -245,7 +245,6 @@ namespace Xarphos.Scripts
               activation[i] *= intensity_decay;
               activation[i] += Math.Max(0,input_effect*(stim-memoryTrace[i]));//);;
               memoryTrace[i] = memoryTrace[i] * trace_decay + trace_increase*stim;
-
             }
 
             Material.SetFloatArray("activation", activation);

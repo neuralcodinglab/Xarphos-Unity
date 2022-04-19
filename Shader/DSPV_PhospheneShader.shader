@@ -14,6 +14,8 @@
 
     SubShader
     {
+        Tags { "Queue" = "Transparent" }
+        
         Lighting Off
         Blend One Zero
 

@@ -20,12 +20,22 @@
     }
 
     fixed4 DSPV_gaussian(float r, float sigma) {
-        float c = 1 / (sigma * 3.5449077);
+        float c = 1 / (sigma * 3.4954077);
         return c * exp(-(r * r) / (2 * sigma * sigma));
     }
 
 
-    float4 DSPV_phospheneSimulation(int gazeLocked, float2 eyePosition, float4 pSpecs[1000], float activation[1000], float nPhosphenes, float sizeCoefficient, float brightness, float dropout, float2 pixelPosition) {
+    float4 DSPV_phospheneSimulation(
+            int gazeLocked,
+            float2 eyePosition,
+            float4 pSpecs[1000],
+            float activation[1000],
+            float nPhosphenes,
+            float sizeCoefficient,
+            float brightness,
+            float dropout,
+            float2 pixelPosition
+        ) {
         // Output luminance for current pixel
         fixed4 pixelLuminance = fixed4(0,0,0,0);
 
