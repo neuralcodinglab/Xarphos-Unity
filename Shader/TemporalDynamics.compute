@@ -1,0 +1,37 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+struct Phosphene
+{
+  float2 position;
+  float size;
+  float activation;
+  float trace;
+};
+
+uint2 resolution;
+
+float input_effect;     // The factor by which stimulation accumulates to phosphene activation
+float intensity_decay;  // The factor by which previous activation still influences current activation
+float trace_increase;   // The habituation strength: the factor by which stimulation leads to buildup of memory trace
+float trace_decay;      // The factor by which the stimulation memory trace decreases
+
+RWStructuredBuffer<Phosphene> phosphenes;
+
+RWTexture2D<float4> ActivationMask;
+
+[numthreads(10,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+  Phosphene phosphene = phosphenes[id.x];
+
+  // Read stimulation value from activation mask
+  uint2 index = uint2((uint)(phosphene.position.x * resolution.x), (uint)(phosphene.position.y * resolution.y));
+  float stim = ActivationMask[index.xy];
+
+  // Compute phosphene activation as function of previous activation and stimulation
+  phosphene.activation = max(0,intensity_decay*phosphene.activation+input_effect*(stim-phosphene.trace)); //max(0,intensity_decay*phosphene.activation + input_effect*(stim-phosphene.trace)); //
+  phosphene.trace = trace_decay*phosphene.trace + trace_increase*stim;
+
+  phosphenes[id.x] = phosphene;
+}

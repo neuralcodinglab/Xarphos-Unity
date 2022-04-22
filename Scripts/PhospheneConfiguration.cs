@@ -7,6 +7,7 @@ namespace Xarphos.Scripts
 {
 
 
+
   public class PhospheneConfiguration
   {   // Data class containing the phosphene configuration (count, locations, sizes)
       // instances can be directly deseriallized from a JSON file using the 'load' method
@@ -27,5 +28,6 @@ namespace Xarphos.Scripts
         File.WriteAllText(filename, json);
         Debug.Log("Saved phosphene configuration to " + filename);
       }
+
   }
 }

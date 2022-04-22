@@ -7,7 +7,7 @@
        _SizeCoefficient ("SizeCoefficient", Range(0.001, 2)) = 0.03
        _Brightness ("Brightness", Range(0, 2)) = 0.005
        _Dropout("Dropout", Range(0.0,0.5)) = 0
-       _PhospheneFilter("PhospheneFilter", Float) = 0
+       _PhospheneFilter("PhospheneFilter", Float) = 1
        _EyePosition("EyePosition", Vector) = (0., 0., 0., 0.)
        _GazeLocked("GazeLocked", Int) = 0
     }
@@ -43,6 +43,11 @@
             // Toggle phosphene filtering
             float _PhospheneFilter;
 
+            // // Mapping and initial size of phosphenes
+            // sampler2D _PhospheneMapping;
+            // float4 _PhospheneMapping_ST;
+            // float4 _PhospheneMapping_TexelSize;
+
             // Texture that determines where phosphenes should be activated
             sampler2D _ActivationMask;
             float4 _ActivationMask_ST;
@@ -63,7 +68,6 @@
             int _nPhosphenes;
             float4 _pSpecs[1000];
 
-            StructuredBuffer<Phosphene> phosphenes;
 
             VertexData vertex_program(AppData inputs)
             {
@@ -77,11 +81,10 @@
             {
 
                 if (_PhospheneFilter==1){
-                  // Simulate phosphenes
-                  return DSPV_phospheneSimulation(phosphenes, _GazeLocked, _EyePosition.rg, _nPhosphenes, _SizeCoefficient, _Brightness, _Dropout, inputs.uv);
+                  // return DSPV_phospheneSimulation(_GazeLocked, _EyePosition.rg, _pSpecs, activation, _PhospheneMapping_TexelSize.z, _PhospheneMapping, _SizeCoefficient, _Brightness, _Dropout, inputs.uv);
+                  return DSPV_phospheneSimulation(_GazeLocked, _EyePosition.rg, _pSpecs, activation, _nPhosphenes, _SizeCoefficient, _Brightness, _Dropout, inputs.uv);
                 }
                 else {
-                  // Return the pixels in main texture
                   return tex2D(_ActivationMask, inputs.uv);
                 }
             }

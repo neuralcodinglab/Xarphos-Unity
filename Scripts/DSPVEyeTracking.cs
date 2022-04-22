@@ -6,7 +6,7 @@ using EyeFramework = ViveSR.anipal.Eye.SRanipal_Eye_Framework;
 
 namespace Xarphos.Scripts
 {
-    [RequireComponent(typeof(DSPV_SimulationController))]
+    // [RequireComponent(typeof(DSPV_SimulationController))]
     public class DSPVEyeTracking : MonoBehaviour
     {
         // Added for Eye Tracking Implementation
@@ -44,7 +44,7 @@ namespace Xarphos.Scripts
 
             return false;
         }
-        
+
         private bool CheckFrameworkStatusErrors()
         {
             return EyeFramework.Status == EyeFramework.FrameworkStatus.WORKING &&
