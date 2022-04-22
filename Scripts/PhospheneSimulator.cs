@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using OpenCVForUnity.CoreModule;
 using OpenCVForUnity.ImgprocModule;
 using OpenCVForUnity.UnityUtils;
-using static ImageSynthesis;
 using  UnityEngine.InputSystem;
 using System.Collections;
 
@@ -17,6 +16,8 @@ namespace Xarphos.Scripts
 
     public class PhospheneSimulator : MonoBehaviour
     {
+        public Camera TargetCamera;
+
 
         // Image processing settings
         float phospheneFiltering = 0.0f;
@@ -32,9 +33,9 @@ namespace Xarphos.Scripts
         [SerializeField] protected Vector2Int resolution;
 
         // Render textures
-        protected RenderTexture inputRT;
-        protected RenderTexture activationMask;
-        protected RenderTexture phospheneRT;
+        [SerializeField] protected RenderTexture inputRT;
+        [SerializeField] protected RenderTexture activationMask;
+        [SerializeField] protected RenderTexture phospheneRT;
 
         // For reading phosphene configuration from JSON
         [SerializeField] string phospheneConfigFile;
@@ -58,6 +59,8 @@ namespace Xarphos.Scripts
 
         protected void Awake()
         {
+            TargetCamera ??= GetComponent<Camera>();
+
             // Initialize the array of phosphenes
             phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
             nPhosphenes = phosphenes.Length;
@@ -105,7 +108,7 @@ namespace Xarphos.Scripts
 
         void OnPreRender() {
         // Render to the input render texture
-          Camera.main.targetTexture = inputRT;
+          TargetCamera.targetTexture = inputRT;
         }
 
 
@@ -115,7 +118,7 @@ namespace Xarphos.Scripts
           yield return new WaitForEndOfFrame();
 
           // Target tex has to be (temporarilty) set to null
-          Camera.main.targetTexture = null;
+          TargetCamera.targetTexture = null;
 
           // Simulate the phosphenes (based on the shared phosphene buffer)
           Graphics.Blit(null as RenderTexture, phospheneRT, phospheneMaterial);
