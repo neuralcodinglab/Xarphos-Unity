@@ -5,8 +5,6 @@ using System.Collections.Generic;
 
 namespace Xarphos.Scripts
 {
-
-
   public class PhospheneConfiguration
   {   // Data class containing the phosphene configuration (count, locations, sizes)
       // instances can be directly deseriallized from a JSON file using the 'load' method

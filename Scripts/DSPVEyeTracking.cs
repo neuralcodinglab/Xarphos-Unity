@@ -188,7 +188,7 @@ namespace Xarphos.Scripts
             //
             return false;
         }
-        
+
         private bool CheckFrameworkStatusErrors()
         {
             return EyeFramework.Status == EyeFramework.FrameworkStatus.WORKING;

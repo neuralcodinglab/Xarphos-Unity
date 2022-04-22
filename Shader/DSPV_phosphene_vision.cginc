@@ -5,6 +5,14 @@
 // #pragma exclude_renderers d3d11
     #define DSPV_PHOSPHENE_VISION
 
+    struct Phosphene
+    {
+      float2 position;
+      float size;
+      float activation;
+      float trace;
+    };
+
 
     // Pseudo-random noise generators (not used for now)
     uint umu7_wang_hash(uint key)
@@ -26,53 +34,50 @@
 
 
     float4 DSPV_phospheneSimulation(
-            int gazeLocked,
-            float2 eyePosition,
-            float4 pSpecs[1000],
-            float activation[1000],
-            float nPhosphenes,
-            float sizeCoefficient,
-            float brightness,
-            float dropout,
-            float2 pixelPosition
-        ) {
+      StructuredBuffer<Phosphene> phospheneBuffer, 
+      int gazeLocked, 
+      float2 eyePosition, 
+      float nPhosphenes, 
+      float sizeCoefficient, 
+      float brightness, 
+      float dropout, 
+      float2 pixelPosition
+    ) {
         // Output luminance for current pixel
         fixed4 pixelLuminance = fixed4(0,0,0,0);
 
         // Distance of current pixel to phosphene center
         float phospheneDistance;
 
-        // Pre-specified phosphene characteristics
-        fixed4 phospheneSpecs;
+        // Phosphene characteristics (read from shared phosphenes databuffer)
         float2 phospheneCenter;
         float phospheneSize;
-
+        float phospheneActivation;
 
         // Loop over all phosphenes
         for (int i = 0; i<nPhosphenes; i++){
 
-          // // Previous solution:
-          // For each phosphene, read specs from pMapping texture
-          // phospheneSpecs = tex2D(phospheneMapping,i/(float)nPhosphenes);
-          // phospheneCenter = phospheneSpecs.rg;
-          // phospheneSize = phospheneSpecs.b * sizeCoefficient;
+          /// Read phosphene from databuffer
+          phospheneSize = phospheneBuffer[i].size * sizeCoefficient;
+          phospheneCenter = phospheneBuffer[i].position;
+          phospheneActivation = phospheneBuffer[i].activation;
 
-
-          /// Read predifined phosphene specifiations from float4 array
-          phospheneSpecs = pSpecs[i];
-          phospheneSize = phospheneSpecs.b * sizeCoefficient;
-          phospheneCenter = phospheneSpecs.rg;
+          // Adjust position of phosphene relative to the gaze direction
           if (gazeLocked == 1){
             phospheneCenter += eyePosition -0.5;
           }
 
           // Calculate distance to current pixel (only the activity of nearby
-          // phosphenes have an effect on the current pixel intensity)
+          // phosphenes have an effect on the current pixel intensity).
           phospheneDistance = distance(phospheneCenter,pixelPosition);
+
+          // Rule of thumb:
+          // at a distacnce of > 3 sigmas, the tail of the gaussian is unobservable
           if (phospheneDistance < 3 * phospheneSize) {
             // Add the effect of the phosphene to the luminance of the current pixel
-            pixelLuminance += activation[i]  * DSPV_gaussian(phospheneDistance, phospheneSize);
+            pixelLuminance += phospheneActivation * DSPV_gaussian(phospheneDistance, phospheneSize);
           }
+
         }
 
         // Fixation dot is colored red
