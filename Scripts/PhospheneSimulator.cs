@@ -1,208 +1,192 @@
 using UnityEngine;
-using Rect = UnityEngine.Rect;
-using OpenCVForUnity;
-using System;
-using System.IO;
-using System.Collections.Generic;
-using OpenCVForUnity.CoreModule;
-using OpenCVForUnity.ImgprocModule;
-using OpenCVForUnity.UnityUtils;
 using  UnityEngine.InputSystem;
-using System.Collections;
 
 namespace Xarphos.Scripts
 {
-    // [RequireComponent(typeof(Renderer))]
-
     public class PhospheneSimulator : MonoBehaviour
     {
-        public Camera TargetCamera;
+        public Camera targetCamera;
 
 
         // Image processing settings
-        float phospheneFiltering = 0.0f;
-        float edgeDetection = 0.0f;
+        private float _phospheneFiltering;
+        private float _edgeDetection;
 
         // EyeTracking
-        protected Vector2 eyePosition;
-        protected int gazeLocking; // used as boolean (sent to shader)
-        protected bool camLocking;
+        protected Vector2 EyePosition;
+        protected int GazeLocking; // used as boolean (sent to shader)
+        protected bool CamLocking;
 
         // Image processing settings
         [SerializeField] protected SurfaceReplacement.ReplacementModes surfaceReplacementMode;
+        private readonly int _nModes = System.Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
         [SerializeField] protected Vector2Int resolution;
 
         // Render textures
-        [SerializeField] protected RenderTexture inputRT;
-        [SerializeField] protected RenderTexture activationMask;
-        [SerializeField] protected RenderTexture phospheneRT;
+        protected RenderTexture ActivationMask;
 
         // For reading phosphene configuration from JSON
-        [SerializeField] string phospheneConfigFile;
-        private Phosphene[] phosphenes;
-        int nPhosphenes;
-        ComputeBuffer phospheneBuffer;
+        [SerializeField] private string phospheneConfigFile;
+        private Phosphene[] _phosphenes;
+        private int _nPhosphenes;
+        private ComputeBuffer _phospheneBuffer;
 
         // Shaders and materials
-        protected Material imageProcessingMaterial;
-        protected Material phospheneMaterial;
+        protected Material ImageProcessingMaterial;
+        protected Material PhospheneMaterial;
         [SerializeField] protected Shader phospheneShader;
         [SerializeField] protected Shader imageProcessingShader;
-        [SerializeField] protected ComputeShader temporalDynamicsCS;
+        [SerializeField] protected ComputeShader temporalDynamicsCs;
 
 
         // stimulation parameters
-        [SerializeField] float input_effect = 0.7f;// The factor by which stimulation accumulates to phosphene activation
-        [SerializeField] float intensity_decay = 0.8f; // The factor by which previous activation still influences current activation
-        [SerializeField] float trace_increase = 0.1f; // The habituation strength: the factor by which stimulation leads to buildup of memory trace
-        [SerializeField] float trace_decay = 0.9f; // The factor by which the stimulation memory trace decreases
+        [SerializeField]
+        private float inputEffect = 0.7f;// The factor by which stimulation accumulates to phosphene activation
+        [SerializeField]
+        private float intensityDecay = 0.8f; // The factor by which previous activation still influences current activation
+        [SerializeField]
+        private float traceIncrease = 0.1f; // The habituation strength: the factor by which stimulation leads to buildup of memory trace
+        [SerializeField]
+        private float traceDecay = 0.9f; // The factor by which the stimulation memory trace decreases
+        
+        #region Shader Properties Name-To-Int
+        private static readonly int PhosMatMask = Shader.PropertyToID("_ActivationMask");
+        private static readonly int PhosMatPhosphenes = Shader.PropertyToID("phosphenes");
+        private static readonly int PhosMatNPhosphenes = Shader.PropertyToID("_nPhosphenes");
+        private static readonly int PhosMatFilter = Shader.PropertyToID("_PhospheneFilter");
+        private static readonly int PhosMatPosition = Shader.PropertyToID("_EyePosition");
+        private static readonly int PhosMatGazeLocked = Shader.PropertyToID("_GazeLocked");
+        
+        private static readonly int TempDynResolution = Shader.PropertyToID("resolution");
+        private static readonly int TempDynMask = Shader.PropertyToID("ActivationMask");
+        private static readonly int TempDynInputEffect = Shader.PropertyToID("input_effect");
+        private static readonly int TempDynIntensityDecay = Shader.PropertyToID("intensity_decay");
+        private static readonly int TempDynTraceIncrease = Shader.PropertyToID("trace_increase");
+        private static readonly int TempDynTraceDecay = Shader.PropertyToID("trace_decay");
+        private static readonly int TempDynPhosphenes = Shader.PropertyToID("phosphenes");
+        
+        private static readonly int ImgProcMode = Shader.PropertyToID("_Mode");
+        private static readonly int ImgMatMainTex = Shader.PropertyToID("_MainTex");
+
+        #endregion
 
         protected void Awake()
         {
-            TargetCamera ??= GetComponent<Camera>();
+            targetCamera ??= GetComponent<Camera>();
 
             // Initialize the array of phosphenes
-            phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
-            nPhosphenes = phosphenes.Length;
-            phospheneBuffer = new ComputeBuffer(nPhosphenes, sizeof(float)*5);
-            phospheneBuffer.SetData(phosphenes);
+            _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
+            _nPhosphenes = _phosphenes.Length;
+            _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*5);
+            _phospheneBuffer.SetData(_phosphenes);
 
 
             // Initialize materials with shaders
-            phospheneMaterial = new Material(phospheneShader);
-            imageProcessingMaterial = new Material(imageProcessingShader);// TODO
+            PhospheneMaterial = new Material(phospheneShader);
+            ImageProcessingMaterial = new Material(imageProcessingShader);// TODO
 
             // Initialize the render textures
-            inputRT = new RenderTexture(resolution.x, resolution.y, 24);
-            activationMask = new RenderTexture(resolution.x, resolution.y, 24);
-            activationMask.enableRandomWrite = true;
-            activationMask.Create();
-            phospheneRT = new RenderTexture(resolution.x, resolution.y, 24);
+            ActivationMask = new RenderTexture(resolution.x, resolution.y, 24);
+            ActivationMask.enableRandomWrite = true;
+            ActivationMask.Create();
+            ImageProcessingMaterial.SetTexture(ImgMatMainTex, ActivationMask);
 
             // Set the shaders with the shared render textures
-            imageProcessingMaterial.SetTexture("_MainTex", inputRT);
-            temporalDynamicsCS.SetInts("resolution", new int[]{resolution.x, resolution.y});
-            temporalDynamicsCS.SetTexture(0,"ActivationMask", activationMask);
-            phospheneMaterial.SetTexture("_ActivationMask", activationMask);
+            temporalDynamicsCs.SetInts(TempDynResolution, new int[] {resolution.x, resolution.y});
+            temporalDynamicsCs.SetTexture(0,TempDynMask, ActivationMask);
+            PhospheneMaterial.SetTexture(PhosMatMask, ActivationMask);
 
             // Set the compute shader with the temporal dynamics variables
-            temporalDynamicsCS.SetFloat("input_effect", input_effect);
-            temporalDynamicsCS.SetFloat("intensity_decay", intensity_decay);
-            temporalDynamicsCS.SetFloat("trace_increase", trace_increase);
-            temporalDynamicsCS.SetFloat("trace_decay", trace_decay);
+            temporalDynamicsCs.SetFloat(TempDynInputEffect, inputEffect);
+            temporalDynamicsCs.SetFloat(TempDynIntensityDecay, intensityDecay);
+            temporalDynamicsCs.SetFloat(TempDynTraceIncrease, traceIncrease);
+            temporalDynamicsCs.SetFloat(TempDynTraceDecay, traceDecay);
 
             // Set the shader properties with the shared phosphene buffer
-            phospheneMaterial.SetBuffer("phosphenes", phospheneBuffer);
-            phospheneMaterial.SetInt("_nPhosphenes", nPhosphenes);
-            phospheneMaterial.SetFloat("_PhospheneFilter", phospheneFiltering);
-            temporalDynamicsCS.SetBuffer(0,"phosphenes", phospheneBuffer);
-
-
+            PhospheneMaterial.SetBuffer(PhosMatPhosphenes, _phospheneBuffer);
+            PhospheneMaterial.SetInt(PhosMatNPhosphenes, _nPhosphenes);
+            PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
+            temporalDynamicsCs.SetBuffer(0,TempDynPhosphenes, _phospheneBuffer);
         }
 
-        void computePhospheneActivity(){
-          // Perform image processing and compute the phosphene activity
-          Graphics.Blit(inputRT, activationMask, imageProcessingMaterial); // using imageProcessingshader
-          temporalDynamicsCS.Dispatch(0,phosphenes.Length/10,1,1);
-        }
-
-        void OnPreRender() {
-        // Render to the input render texture
-          TargetCamera.targetTexture = inputRT;
-        }
-
-
-        IEnumerator blitToScreen()
+        private void OnRenderImage(RenderTexture src, RenderTexture target)
         {
-          // Wait until all reder textures are rendered
-          yield return new WaitForEndOfFrame();
-
-          // Target tex has to be (temporarilty) set to null
-          TargetCamera.targetTexture = null;
-
-          // Simulate the phosphenes (based on the shared phosphene buffer)
-          Graphics.Blit(null as RenderTexture, phospheneRT, phospheneMaterial);
-
-          // Blit to the screen
-          Graphics.Blit(phospheneRT, null as RenderTexture);
-          yield return null;
+          // Compute Phosphene Activity
+          if ((int)_phospheneFiltering == 1)
+          {
+            Graphics.Blit(src, ActivationMask, ImageProcessingMaterial); // using imageProcessingShader
+            temporalDynamicsCs.Dispatch(0, _phosphenes.Length / 10, 1, 1);
+            // Simulate the phosphenes (based on the shared phosphene buffer)
+            Graphics.Blit(null, target, PhospheneMaterial);
+          }
+          else
+          {
+            Graphics.Blit(src, target, ImageProcessingMaterial);
+          }
         }
 
-        void OnDisable(){
-          phospheneBuffer.Release();
+        private void OnDisable(){
+          _phospheneBuffer.Release();
         }
 
-        void nextSurfaceReplacementMode(){
-          var nModes = System.Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
-          surfaceReplacementMode += 1;
-
-          if((int)surfaceReplacementMode < nModes){
-            // Replace surfaces with the surface replacement shader
-            SurfaceReplacement.ActivateReplacementShader(surfaceReplacementMode);
-          }
-          else{
-            // If cycled through all modes -> set back to first element
-            surfaceReplacementMode = 0;
-            SurfaceReplacement.DeactivateReplacementShader(); // (first mode is no surface replacement)
-          }
+        private void NextSurfaceReplacementMode(){
+          surfaceReplacementMode = (SurfaceReplacement.ReplacementModes)((int)(surfaceReplacementMode + 1) % _nModes);
+          // Replace surfaces with the surface replacement shader
+          SurfaceReplacement.ActivateReplacementShader(targetCamera, surfaceReplacementMode);
         }
 
 
         protected void Update()
         {
-            computePhospheneActivity();
-            StartCoroutine(blitToScreen());
-
-
             if (Keyboard.current[Key.U].isPressed || Keyboard.current[Key.J].isPressed)
             {
-                if (Keyboard.current[Key.U].isPressed) {eyePosition.y = 0.8f;}
-                if (Keyboard.current[Key.J].isPressed) {eyePosition.y = 0.2f;}
+                if (Keyboard.current[Key.U].isPressed) {EyePosition.y = 0.8f;}
+                if (Keyboard.current[Key.J].isPressed) {EyePosition.y = 0.2f;}
             }
             else
             {
-              eyePosition.y = 0.5f;
+              EyePosition.y = 0.5f;
             }
 
             if (Keyboard.current[Key.H].isPressed || Keyboard.current[Key.K].isPressed)
             {
-                if (Keyboard.current[Key.H].isPressed) {eyePosition.x = 0.2f;}
-                if (Keyboard.current[Key.K].isPressed) {eyePosition.x = 0.8f;}
+                if (Keyboard.current[Key.H].isPressed) {EyePosition.x = 0.2f;}
+                if (Keyboard.current[Key.K].isPressed) {EyePosition.x = 0.8f;}
             }
             else
             {
-              eyePosition.x = 0.5f;
+              EyePosition.x = 0.5f;
             }
 
-            if (Keyboard.current[Key.G].isPressed)
+            if (Keyboard.current[Key.G].wasPressedThisFrame)
             {
-              gazeLocking = 1-gazeLocking;
+              GazeLocking = 1-GazeLocking;
             }
 
-            if (Keyboard.current[Key.C].isPressed)
+            if (Keyboard.current[Key.C].wasPressedThisFrame)
             {
-              camLocking = !camLocking;
+              CamLocking = !CamLocking;
             }
 
-            if (Keyboard.current[Key.T].isPressed)
+            if (Keyboard.current[Key.T].wasPressedThisFrame)
             {
-              nextSurfaceReplacementMode();
+              NextSurfaceReplacementMode();
             }
 
-            if (Keyboard.current[Key.E].isPressed)
+            if (Keyboard.current[Key.E].wasPressedThisFrame)
             {
-              edgeDetection = 1-edgeDetection;
-              imageProcessingMaterial.SetFloat("_Mode", edgeDetection);
+              _edgeDetection = 1-_edgeDetection;
+              ImageProcessingMaterial.SetFloat(ImgProcMode, _edgeDetection);
             }
 
-            if (Keyboard.current[Key.P].isPressed)
+            if (Keyboard.current[Key.P].wasPressedThisFrame)
             {
-              phospheneFiltering = 1-phospheneFiltering;
-              phospheneMaterial.SetFloat("_PhospheneFilter", phospheneFiltering);
+              _phospheneFiltering = 1-_phospheneFiltering;
+              PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
             }
 
-            phospheneMaterial.SetVector("_EyePosition", eyePosition);
-            phospheneMaterial.SetInt("_GazeLocked", gazeLocking);
+            PhospheneMaterial.SetVector(PhosMatPosition, EyePosition);
+            PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
         }
 
     }
