@@ -18,9 +18,15 @@ public class SurfaceReplacement: MonoBehaviour
 		Normals	= 5
 	}
 
-	public static void ActivateReplacementShader(ReplacementModes replacementMode){
+	public static void ActivateReplacementShader(Camera target, ReplacementModes replacementMode){
+		if (replacementMode == ReplacementModes.None)
+		{
+			DeactivateReplacementShader(target);
+			return;
+		}
+		
 		// For rendering the object ID labels (instance segmentation)
-		var renderers = UnityEngine.Object.FindObjectsOfType<Renderer>();
+		var renderers = FindObjectsOfType<Renderer>();
 		var mpb = new MaterialPropertyBlock();
 		foreach (var r in renderers)
 		{
@@ -30,11 +36,11 @@ public class SurfaceReplacement: MonoBehaviour
 			mpb.SetInt("_OutputMode",(int)replacementMode);
 		}
 
-		Camera.main.SetReplacementShader(replacementShader, "");
+		target.SetReplacementShader(replacementShader, "");
 	}
 
-	public static void DeactivateReplacementShader(){
-		Camera.main.ResetReplacementShader();
+	public static void DeactivateReplacementShader(Camera target){
+		target.ResetReplacementShader();
 	}
 
 	public static byte ReverseBits(byte value)
