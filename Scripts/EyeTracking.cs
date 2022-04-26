@@ -297,7 +297,7 @@ namespace Xarphos.Scripts
             SRanipal_Eye_v2.GetGazeRay(GazeIndex.RIGHT, out rightOrigin, out rightDir, eyeData);
             SRanipal_Eye_v2.GetGazeRay(GazeIndex.COMBINE, out centreOrigin, out centreDir, eyeData);
 
-            // transform from local space
+            // transform from local space 
             var t = mainCam.transform;
             leftOrigin = t.TransformPoint(leftOrigin);
             rightOrigin = t.TransformPoint(rightOrigin);

@@ -129,12 +129,44 @@ namespace Xarphos.Scripts
           _phospheneBuffer.Release();
         }
 
+        public void NextSurfaceReplacementMode(InputAction.CallbackContext ctx) => NextSurfaceReplacementMode();
+        
         private void NextSurfaceReplacementMode(){
           surfaceReplacementMode = (SurfaceReplacement.ReplacementModes)((int)(surfaceReplacementMode + 1) % _nModes);
           // Replace surfaces with the surface replacement shader
           SurfaceReplacement.ActivateReplacementShader(targetCamera, surfaceReplacementMode);
         }
 
+        public void TogglePhospheneSim(InputAction.CallbackContext ctx) => TogglePhospheneSim();
+
+        public void TogglePhospheneSim()
+        {
+          _phospheneFiltering = 1-_phospheneFiltering;
+          PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
+        }
+
+        public void ToggleEdgeDetection(InputAction.CallbackContext ctx) => ToggleEdgeDetection();
+
+        private void ToggleEdgeDetection()
+        {
+          _edgeDetection = 1-_edgeDetection;
+          ImageProcessingMaterial.SetFloat(ImgProcMode, _edgeDetection);
+        }
+        
+        public void ToggleCamLocking(InputAction.CallbackContext ctx) => ToggleCamLocking();
+
+        public void ToggleCamLocking()
+        {
+          CamLocking = !CamLocking;
+        }
+        
+        public void ToggleGazeLocking(InputAction.CallbackContext ctx) => ToggleGazeLocking();
+
+        public void ToggleGazeLocking()
+        {
+          GazeLocking = 1-GazeLocking;
+          PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
+        }
 
         protected void Update()
         {
@@ -158,36 +190,7 @@ namespace Xarphos.Scripts
               EyePosition.x = 0.5f;
             }
 
-            if (Keyboard.current[Key.G].wasPressedThisFrame)
-            {
-              GazeLocking = 1-GazeLocking;
-            }
-
-            if (Keyboard.current[Key.C].wasPressedThisFrame)
-            {
-              CamLocking = !CamLocking;
-            }
-
-            if (Keyboard.current[Key.T].wasPressedThisFrame)
-            {
-              NextSurfaceReplacementMode();
-            }
-
-            if (Keyboard.current[Key.E].wasPressedThisFrame)
-            {
-              _edgeDetection = 1-_edgeDetection;
-              ImageProcessingMaterial.SetFloat(ImgProcMode, _edgeDetection);
-            }
-
-            if (Keyboard.current[Key.P].wasPressedThisFrame)
-            {
-              _phospheneFiltering = 1-_phospheneFiltering;
-              PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
-            }
-
             PhospheneMaterial.SetVector(PhosMatPosition, EyePosition);
-            PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
         }
-
     }
 }
