@@ -14,6 +14,7 @@ Properties {
 SubShader {
 CGINCLUDE
 
+#include <UnityCustomRenderTexture.cginc>
 fixed4 _ObjectColor;
 fixed4 _CategoryColor;
 int _OutputMode;
