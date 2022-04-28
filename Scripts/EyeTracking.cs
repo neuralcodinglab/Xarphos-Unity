@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using Unity.VisualScripting;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using ViveSR.anipal;
@@ -36,6 +37,8 @@ namespace Xarphos.Scripts
         private static float time_stamp;
         private static int frame;
 
+        private PhospheneSimulator sim;
+
 
         internal bool EyeTrackingAvailable { get; private set; }
         
@@ -45,6 +48,8 @@ namespace Xarphos.Scripts
             // SRanipal_Eye_v2.LaunchEyeCalibration();     // Perform calibration for eye tracking.
             Invoke(nameof(SystemCheck), .5f);
             Invoke(nameof(RegisterCallback), .5f);
+
+            sim = GetComponent<PhospheneSimulator>();
         }
         
         private void FixedUpdate()
@@ -58,6 +63,10 @@ namespace Xarphos.Scripts
 
         private void Update()
         {
+            Debug.Log($"Gaze Origins:: Left: {gaze_origin_L}; Right: {gaze_origin_R}; Combined: {eyeData.verbose_data.combined.eye_data.gaze_origin_mm}");
+            Debug.Log($"Gaze Convergence Data: Valid: {eyeData.verbose_data.combined.convergence_distance_validity}; Dist: {eyeData.verbose_data.combined.convergence_distance_mm:F}");
+            GazeIntersection();
+            
             if (Keyboard.current[Key.F8].wasPressedThisFrame)
             {
                 SetDebugGazeRender(!renderGazeRays);
@@ -207,16 +216,18 @@ namespace Xarphos.Scripts
         }
        
 #region EyeData Clean Up & Necessities
-        private void OnDisable()
-        {
-            Release();
-        }
-
         void OnApplicationQuit()
         {
             Release();
         }
+
+        private void OnDisable()
+        {
+            Release();
+        }
         
+                
+
         /// <summary>
         /// Release callback thread when disabled or quit
         /// </summary>
@@ -230,8 +241,12 @@ namespace Xarphos.Scripts
                 eye_callback_registered = false;
             }
             
+            Destroy(leftGazeLine.material);
+            Destroy(rightGazeLine.material);
+            Destroy(centreGazeLine.material);
             Destroy(leftVisual);
             Destroy(rightVisual);
+            Destroy(centreVisual);
         }
         
         /// <summary>
@@ -257,28 +272,36 @@ namespace Xarphos.Scripts
             {
                 mainCam = Camera.main;
                 leftVisual = new GameObject("LeftGazeRender");
+                leftVisual.transform.SetParent(transform, false);
+                leftVisual.transform.localPosition = Vector3.zero;
                 rightVisual = new GameObject("RightGazeRender");
+                rightVisual.transform.SetParent(transform, false);
+                rightVisual.transform.localPosition = Vector3.zero;
                 centreVisual = new GameObject("CentreGazeRender");
+                centreVisual.transform.SetParent(transform, false);
+                centreVisual.transform.localPosition = Vector3.zero;
                 leftGazeLine = leftVisual.AddComponent<LineRenderer>();
                 {
-                    leftGazeLine.startColor = Color.green;
-                    leftGazeLine.endColor = Color.green;
+                    leftGazeLine.material = new Material(Shader.Find("Standard"));
+                    leftGazeLine.material.SetColor("_Color", Color.green);
+                    // leftGazeLine.startColor = Color.green;
+                    // leftGazeLine.endColor = Color.green;
                     leftGazeLine.startWidth = 0.005f;
                     leftGazeLine.endWidth = 0.005f;
                 }
                 rightGazeLine = rightVisual.AddComponent<LineRenderer>();
                 {
-                    rightGazeLine.startColor = Color.red;
-                    rightGazeLine.endColor = Color.red;
+                    rightGazeLine.material = new Material(Shader.Find("Standard"));
+                    rightGazeLine.material.SetColor("_Color", Color.red);
                     rightGazeLine.startWidth = 0.005f;
                     rightGazeLine.endWidth = 0.005f;
                 }
                 centreGazeLine = centreVisual.AddComponent<LineRenderer>();
                 {
-                    rightGazeLine.startColor = Color.white;
-                    rightGazeLine.endColor = Color.white;
-                    rightGazeLine.startWidth = 0.005f;
-                    rightGazeLine.endWidth = 0.005f;
+                    centreGazeLine.material = new Material(Shader.Find("Standard"));
+                    centreGazeLine.material.SetColor("_Color", Color.cyan);
+                    centreGazeLine.startWidth = 0.005f;
+                    centreGazeLine.endWidth = 0.005f;
                 }
             }
             
@@ -306,11 +329,89 @@ namespace Xarphos.Scripts
             rightDir = t.TransformDirection(rightDir);
             centreDir = t.TransformDirection(centreDir);
 
+            bool validityLeft =
+                eyeData.verbose_data.left.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) &&
+                eyeData.verbose_data.left.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+            bool validityRight =
+                eyeData.verbose_data.right.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) &&
+                eyeData.verbose_data.right.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+            bool validityCentre =
+                eyeData.verbose_data.combined.eye_data.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) &&
+                eyeData.verbose_data.combined.eye_data.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+
             // update render
-            leftGazeLine.SetPositions(new [] { leftOrigin, leftOrigin + leftDir * 20 });
-            rightGazeLine.SetPositions(new [] { rightOrigin, rightOrigin + rightDir * 20 });
-            centreGazeLine.SetPositions(new[] { centreOrigin, centreOrigin + centreDir * 20 });
+            leftGazeLine.SetPositions(
+                validityLeft ? new[] { leftOrigin, leftOrigin + leftDir * 20 } : new [] { Vector3.zero, Vector3.zero });
+            rightGazeLine.SetPositions(
+                validityRight ? new [] { rightOrigin, rightOrigin + rightDir * 20 } : new [] { Vector3.zero, Vector3.zero });
+            centreGazeLine.SetPositions(
+                validityCentre ? new[] { centreOrigin, centreOrigin + centreDir * 20 } : new [] { Vector3.zero, Vector3.zero });
         }
 #endregion
+
+#region eye position tests
+
+private Vector3 left2Frustrum, right2Frustrum, comb2Frustrum, combConverged2Screen2Frustrum;
+        void GazeIntersection()
+        {
+            var cam = sim.targetCamera;
+            var bottomLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 0, cam.nearClipPlane)));
+            var upperLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 1, cam.nearClipPlane)));
+            var upperRight = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(1, 1, cam.nearClipPlane)));
+            Plane clippingPlane = new Plane(upperRight, upperLeft, bottomLeft);
+
+            var eyeOriginLeft = eyeData.verbose_data.left.gaze_origin_mm * .001f; // converted to "m", which is the space unity should be in
+            var eyeDirLeft = eyeData.verbose_data.left.gaze_direction_normalized;
+            var eyeOriginRight = eyeData.verbose_data.right.gaze_origin_mm * .001f;
+            var eyeDirRight = eyeData.verbose_data.right.gaze_direction_normalized;
+            var eyeOriginCombined = eyeData.verbose_data.combined.eye_data.gaze_origin_mm * .001f;
+            var eyeDirCombined = eyeData.verbose_data.combined.eye_data.gaze_direction_normalized;
+
+            var gazeRayLeft = new Ray(eyeOriginLeft, eyeDirLeft);
+            var gazeRayRight = new Ray(eyeOriginRight, eyeDirRight);
+            var gazeRayCombined = new Ray(eyeOriginCombined, eyeDirCombined);
+
+            clippingPlane.Raycast(gazeRayLeft, out var distLeft);
+            clippingPlane.Raycast(gazeRayRight, out var distRight);
+            clippingPlane.Raycast(gazeRayCombined, out var distComb);
+
+            var intersectionLeft = gazeRayLeft.GetPoint(distLeft);
+            var intersectionRight = gazeRayRight.GetPoint(distRight);
+            var intersectionCombined = gazeRayCombined.GetPoint(distComb);
+
+            left2Frustrum = cam.transform.TransformPoint(intersectionLeft);
+            right2Frustrum = cam.transform.TransformPoint(intersectionRight);
+            comb2Frustrum = cam.transform.TransformPoint(intersectionCombined);
+
+            SRanipal_Eye_v2.Focus(GazeIndex.COMBINE, out _, out var focusInfo, 1f, 20f, eyeData);
+            var frustrumPos = cam.WorldToViewportPoint(focusInfo.point);
+            frustrumPos.z = cam.nearClipPlane;
+            combConverged2Screen2Frustrum = cam.ViewportToWorldPoint(frustrumPos);
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            Gizmos.color = Color.green;
+            Gizmos.DrawSphere(left2Frustrum, .01f);
+            Gizmos.color = Color.red;
+            Gizmos.DrawSphere(right2Frustrum, .01f);
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawSphere(comb2Frustrum, .01f);
+            Gizmos.color = Color.yellow;
+            Gizmos.DrawSphere(combConverged2Screen2Frustrum, .01f);
+        }
+
+        void MinDistanceGazeVectors()
+        {
+            var cross = Vector3.Cross(eyeData.verbose_data.left.gaze_direction_normalized,
+                eyeData.verbose_data.right.gaze_direction_normalized);
+            var d = Vector3.Scale(
+                eyeData.verbose_data.left.gaze_origin_mm * 0.001f - eyeData.verbose_data.right.gaze_origin_mm * 0.001f,
+                cross.normalized
+            ).sqrMagnitude;
+
+        }
+
+        #endregion
     }
 }
