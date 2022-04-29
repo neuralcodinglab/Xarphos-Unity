@@ -6,7 +6,7 @@ namespace Xarphos.Scripts
     public class PhospheneSimulator : MonoBehaviour
     {
         public Camera targetCamera;
-
+        public bool manualEyePos;
 
         // Image processing settings
         private float _phospheneFiltering;
@@ -168,29 +168,27 @@ namespace Xarphos.Scripts
           PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
         }
 
+        public void SetEyePosition(Vector2 pos)
+        {
+            EyePosition = pos;
+            PhospheneMaterial.SetVector(PhosMatPosition, EyePosition);
+        }
+
         protected void Update()
         {
-            if (Keyboard.current[Key.U].isPressed || Keyboard.current[Key.J].isPressed)
-            {
-                if (Keyboard.current[Key.U].isPressed) {EyePosition.y = 0.8f;}
-                if (Keyboard.current[Key.J].isPressed) {EyePosition.y = 0.2f;}
-            }
-            else
-            {
-              EyePosition.y = 0.5f;
-            }
+          if (manualEyePos)
+          {
+            var eyePos = Vector2.zero;
+            if (Keyboard.current[Key.J].isPressed) eyePos.y = .2f;
+            else if (Keyboard.current[Key.U].isPressed) eyePos.y = .8f;
+            else eyePos.y = .5f;
 
-            if (Keyboard.current[Key.H].isPressed || Keyboard.current[Key.K].isPressed)
-            {
-                if (Keyboard.current[Key.H].isPressed) {EyePosition.x = 0.2f;}
-                if (Keyboard.current[Key.K].isPressed) {EyePosition.x = 0.8f;}
-            }
-            else
-            {
-              EyePosition.x = 0.5f;
-            }
+            if (Keyboard.current[Key.K].isPressed) eyePos.x = .8f;
+            else if (Keyboard.current[Key.H].isPressed) eyePos.x = .2f;
+            else eyePos.x = .5f;
 
-            PhospheneMaterial.SetVector(PhosMatPosition, EyePosition);
+            SetEyePosition(eyePos);
+          }
         }
     }
 }
