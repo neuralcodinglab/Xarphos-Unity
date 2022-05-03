@@ -9,6 +9,14 @@ namespace Xarphos.Scripts
     // [RequireComponent(typeof(DSPV_SimulationController))]
     public class DSPVEyeTracking : MonoBehaviour
     {
+
+      public enum EyeTrackingConditions
+      {
+        GazeIgnored = 0,
+        SimulationFixedToGaze = 1,
+        GazeAssistedSampling	= 2,
+      }
+
         // Added for Eye Tracking Implementation
         [SerializeField] private Camera simCam;
         internal bool EyeTrackingAvailable { get; private set; }

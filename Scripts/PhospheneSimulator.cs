@@ -24,12 +24,12 @@ namespace Xarphos.Scripts
 
         // EyeTracking
         protected Vector2 eyePosition;
-        protected int gazeLocking; // used as boolean (sent to shader)
-        protected bool camLocking;
 
         // Image processing settings
+        [SerializeField] protected DSPVEyeTracking.EyeTrackingConditions eyeTrackingCondition;
         [SerializeField] protected SurfaceReplacement.ReplacementModes surfaceReplacementMode;
         [SerializeField] protected Vector2Int resolution;
+        [SerializeField] protected Vector2 FOV;
 
         // Render textures
         protected RenderTexture inputRT;
@@ -59,8 +59,10 @@ namespace Xarphos.Scripts
         protected void Awake()
         {
             // Initialize the array of phosphenes
-            phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
+            phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile, FOV);
             nPhosphenes = phosphenes.Length;
+
+            print(phosphenes[0]);
             phospheneBuffer = new ComputeBuffer(nPhosphenes, sizeof(float)*5);
             phospheneBuffer.SetData(phosphenes);
 
@@ -94,6 +96,9 @@ namespace Xarphos.Scripts
             phospheneMaterial.SetFloat("_PhospheneFilter", phospheneFiltering);
             temporalDynamicsCS.SetBuffer(0,"phosphenes", phospheneBuffer);
 
+            // Set the default EyeTrackingCondition (Ignore Gaze)
+            phospheneMaterial.SetInt("_GazeLocked", 0);
+            temporalDynamicsCS.SetInt("gazeAssistedSampling", 0);
 
         }
 
@@ -144,6 +149,31 @@ namespace Xarphos.Scripts
           }
         }
 
+        void nextEyeTrackingCondition(){
+          var nModes = System.Enum.GetValues(typeof(DSPVEyeTracking.EyeTrackingConditions)).Length;
+          eyeTrackingCondition += 1;
+          if ((int)eyeTrackingCondition >= nModes)
+          {
+            //cycled through all modes -> set back to first element
+            // GazeIgnored
+            eyeTrackingCondition = 0;
+            phospheneMaterial.SetInt("_GazeLocked", 0);
+            temporalDynamicsCS.SetInt("gazeAssistedSampling", 0);
+          }
+          else if ((int)eyeTrackingCondition == 1)
+          {
+            // SimulationFixedToGaze
+            phospheneMaterial.SetInt("_GazeLocked", 1);
+            temporalDynamicsCS.SetInt("gazeAssistedSampling", 0);
+          }
+          else if ((int)eyeTrackingCondition == 2)
+          {
+            // GazeAssistedSampling
+            phospheneMaterial.SetInt("_GazeLocked", 1);
+            temporalDynamicsCS.SetInt("gazeAssistedSampling", 1);
+          }
+        }
+
 
         protected void Update()
         {
@@ -171,35 +201,35 @@ namespace Xarphos.Scripts
               eyePosition.x = 0.5f;
             }
 
-            if (Keyboard.current[Key.G].isPressed)
-            {
-              gazeLocking = 1-gazeLocking;
-            }
 
             if (Keyboard.current[Key.C].isPressed)
             {
-              camLocking = !camLocking;
+                nextEyeTrackingCondition();
+                print("Condition: " + eyeTrackingCondition);
             }
 
             if (Keyboard.current[Key.T].isPressed)
             {
               nextSurfaceReplacementMode();
+              print("Surface replacement mode: " + surfaceReplacementMode);
             }
 
             if (Keyboard.current[Key.E].isPressed)
             {
               edgeDetection = 1-edgeDetection;
               imageProcessingMaterial.SetFloat("_Mode", edgeDetection);
+              print("Post processing: " + ((edgeDetection==1)? "Sobel edge-detection": "None"));
             }
 
             if (Keyboard.current[Key.P].isPressed)
             {
               phospheneFiltering = 1-phospheneFiltering;
               phospheneMaterial.SetFloat("_PhospheneFilter", phospheneFiltering);
+              print("Phosphene filter: " +  ((phospheneFiltering==1)? "Yes" : "No") );
             }
 
             phospheneMaterial.SetVector("_EyePosition", eyePosition);
-            phospheneMaterial.SetInt("_GazeLocked", gazeLocking);
+            temporalDynamicsCS.SetVector("_EyePosition", eyePosition);
         }
 
     }

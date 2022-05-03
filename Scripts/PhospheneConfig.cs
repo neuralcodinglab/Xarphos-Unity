@@ -18,9 +18,10 @@ namespace Xarphos.Scripts
   {   // Data class containing the phosphene configuration (count, locations, sizes)
       // instances can be directly deseriallized from a JSON file using the 'load' method
 
-      public string description = "PHOSPHENE SPECIFICATIONS FILE.  'nPhosphenes': the number of phosphenes. 'positions': the (x,y) position in screen coordinate (range 0 to 1).  'sizes': the size (sigma) of each phosphene relative to the screen.";
+      public string description = "PHOSPHENE SPECIFICATIONS FILE.  'nPhosphenes': the number of phosphenes. 'eccentricities': the radius (in degrees of visual angle) from the foveal center for each phosphene. 'azimuth_angles': the polar angle (in radians) for each phosphene. 'size': each phosphene's default size (in dva). ";
       public int nPhosphenes;
-      public Vector2[] positions;
+      public float[] eccentricities;
+      public float[] azimuth_angles;
       public float[] sizes;
 
       public static PhospheneConfig load(string filename)
@@ -36,16 +37,20 @@ namespace Xarphos.Scripts
         Debug.Log("Saved phosphene configuration to " + filename);
       }
 
-      public static Phosphene[] InitPhosphenesFromJSON(string filename)
+      public static Phosphene[] InitPhosphenesFromJSON(string filename, Vector2 FieldOfView)
       {
         // Initializes a struct-array with all phosphenes. Note that this struct
         // array (Phosphene) contains more properties than only position and size
         PhospheneConfig config = PhospheneConfig.load(filename);
+        Debug.Log(config.nPhosphenes);
+        Debug.Log(config.description);
         Phosphene[] phosphenes = new Phosphene[config.nPhosphenes];
         for (int i=0; i<config.nPhosphenes; i++)
         {
-          phosphenes[i].position = config.positions[i];
-          phosphenes[i].size = config.sizes[i];
+          var x = config.eccentricities[i] * Mathf.Cos(config.azimuth_angles[i]);
+          var y = config.eccentricities[i] * Mathf.Sin(config.azimuth_angles[i]);
+          phosphenes[i].position = new Vector2(0.5f,0.5f) + new Vector2(x,y) / FieldOfView;
+          phosphenes[i].size = config.sizes[i] / FieldOfView.x;
         }
         return phosphenes;
       }
