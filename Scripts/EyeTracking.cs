@@ -44,10 +44,11 @@ namespace Xarphos.Scripts
 
         private PhospheneSimulator sim;
 
-
         internal bool EyeTrackingAvailable { get; private set; }
+
+        public enum EyeTrackingConditions { GazeIgnored = 0, SimulationFixedToGaze = 1, GazeAssistedSampling = 2 }
         
-#region Unity Event Functioens
+#region Unity Event Functions
         private void Start()
         {
             // SRanipal_Eye_v2.LaunchEyeCalibration();     // Perform calibration for eye tracking.
