@@ -1,8 +1,6 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using TMPro;
-using Unity.VisualScripting;
-using UnityEditor;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using ViveSR.anipal;
@@ -43,6 +41,7 @@ namespace Xarphos.Scripts
         private static int frame;
 
         private PhospheneSimulator sim;
+        private FocusInfo lastFocusUpdate;
 
         internal bool EyeTrackingAvailable { get; private set; }
 
@@ -73,15 +72,40 @@ namespace Xarphos.Scripts
 
             // Gaze Debugging
             GazeTestsUpdate();
-            
-            FocusInfo focusInfo;
-            if (SRanipal_Eye_v2.Focus(GazeIndex.COMBINE, out _, out focusInfo, 0.01f, 10f, HallwayLayerMask, eyeData)) { }
-            else if (SRanipal_Eye_v2.Focus(GazeIndex.LEFT, out _, out focusInfo, 0.01f, 10f, HallwayLayerMask, eyeData)) {}
-            else if (SRanipal_Eye_v2.Focus(GazeIndex.RIGHT, out _, out focusInfo, 0.01f, 10f, HallwayLayerMask, eyeData)) {}
 
-            Vector2 eyePos = sim.targetCamera.WorldToViewportPoint(focusInfo.point);
-            // ToDo: Update only when valid; Consider gaze smoothing; Play with SrAnipal GazeParameter
-            sim.SetEyePosition(eyePos);
+            // Get validity values of gaze & only test for focus if gaze is valid
+            SingleEyeData tmpR = eyeData.verbose_data.right;
+            SingleEyeData tmpL = eyeData.verbose_data.left;
+            SingleEyeData tmpC = eyeData.verbose_data.combined.eye_data;
+            bool rValid = tmpR.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) &&
+                          tmpR.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+            bool lValid = tmpL.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) && 
+                          tmpL.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+            bool cValid = tmpC.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_ORIGIN_VALIDITY) && 
+                          tmpC.GetValidity(SingleEyeDataValidity.SINGLE_EYE_DATA_GAZE_DIRECTION_VALIDITY);
+            
+
+            // find focus point in world
+            if (cValid && SRanipal_Eye_v2.Focus(GazeIndex.COMBINE, out _, out lastFocusUpdate, 0.01f, 30f, HallwayLayerMask, eyeData)) {}
+            else if (lValid && SRanipal_Eye_v2.Focus(GazeIndex.LEFT, out _, out lastFocusUpdate, 0.01f, 30f, HallwayLayerMask, eyeData)) {}
+            else if (rValid && SRanipal_Eye_v2.Focus(GazeIndex.RIGHT, out _, out lastFocusUpdate, 0.01f, 30f, HallwayLayerMask, eyeData)) {}
+            // no focus point was found, so don't update
+            else { return; }
+
+            // // ToDo: Consider gaze smoothing; Play with SrAnipal GazeParameter
+            // projection from local space to clip space
+            var lMat = sim.targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Left);
+            var rMat = sim.targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Right);
+            // projection from world space into local space
+            var w2c = sim.targetCamera.worldToCameraMatrix;
+            // world space * w2c -> local space; local space * projection = clip space
+            var lProjection = lMat * w2c * new Vector4(lastFocusUpdate.point.x, lastFocusUpdate.point.y, lastFocusUpdate.point.z, 1f);
+            var rProjection = rMat * w2c * new Vector4(lastFocusUpdate.point.x, lastFocusUpdate.point.y, lastFocusUpdate.point.z, 1f);
+            // scale and shift into view space
+            var lViewSpace = (new Vector2(lProjection.x, lProjection.y) / lProjection.w) * .5f + .5f * Vector2.one;
+            var rViewSpace = (new Vector2(rProjection.x, rProjection.y) / rProjection.w) * .5f + .5f * Vector2.one;
+            Vector2 eyePos = sim.targetCamera.WorldToViewportPoint(lastFocusUpdate.point);
+            sim.SetEyePosition(lViewSpace, rViewSpace);
         }
 #endregion
 
@@ -207,16 +231,6 @@ namespace Xarphos.Scripts
         }
 #endregion
 
-        private int Gcf(int a, int b)
-        {
-            while (b != 0)
-            {
-                int temp = b;
-                b = a % b;
-                a = temp;
-            }
-            return a;
-        }
        
 #region EyeData Clean Up & Necessities
         void OnApplicationQuit()
@@ -255,6 +269,13 @@ namespace Xarphos.Scripts
         internal class MonoPInvokeCallbackAttribute : Attribute { }
 #endregion
 
+#region Debug Gaze Rendering
+        private static bool renderGazeRays, freezeGazeRays;
+        private static GameObject leftVisual, rightVisual, centreVisual;
+        private static LineRenderer leftGazeLine, rightGazeLine, centreGazeLine;
+
+        private static Camera mainCam;
+        
         private void GazeTestsUpdate()
         {
             if (DebugGazeCalcs)
@@ -281,33 +302,6 @@ namespace Xarphos.Scripts
                 }
             }
         }
-
-        private void GazeTestsRelease()
-        {
-            Debug.Log("Destroying");
-            if (leftVisual != null)
-            {
-                Destroy(leftGazeLine.material);
-                Destroy(leftVisual);
-            }
-            if (rightVisual != null)
-            {
-                Destroy(rightGazeLine.material);
-                Destroy(rightVisual);
-            }
-            if (centreVisual != null)
-            {
-                Destroy(centreGazeLine.material);
-                Destroy(centreVisual);
-            }
-        }
-
-#region Debug Gaze Rendering
-        private static bool renderGazeRays, freezeGazeRays;
-        private static GameObject leftVisual, rightVisual, centreVisual;
-        private static LineRenderer leftGazeLine, rightGazeLine, centreGazeLine;
-
-        private static Camera mainCam;
 
         private void SetDebugGazeRender(bool status)
         {
@@ -391,6 +385,26 @@ namespace Xarphos.Scripts
             centreGazeLine.SetPositions(
                 validityCentre ? new[] { centreOrigin, centreOrigin + centreDir * 20 } : new [] { Vector3.zero, Vector3.zero });
         }
+        
+        private void GazeTestsRelease()
+        {
+            Debug.Log("Destroying");
+            if (leftVisual != null)
+            {
+                Destroy(leftGazeLine.material);
+                Destroy(leftVisual);
+            }
+            if (rightVisual != null)
+            {
+                Destroy(rightGazeLine.material);
+                Destroy(rightVisual);
+            }
+            if (centreVisual != null)
+            {
+                Destroy(centreGazeLine.material);
+                Destroy(centreVisual);
+            }
+        }
 #endregion
 
 #region eye position tests
@@ -404,39 +418,39 @@ private GameObject FocusSphere = null, ConvergenceSphere = null, ConvergenceLeft
 private float focusCastRadius = .01f;
         void GazeIntersection()
         {
-            var cam = sim.targetCamera;
-            var bottomLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 0, cam.nearClipPlane)));
-            var upperLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 1, cam.nearClipPlane)));
-            var upperRight = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(1, 1, cam.nearClipPlane)));
-            Plane clippingPlane = new Plane(upperRight, upperLeft, bottomLeft);
-
-            var eyeOriginLeft = eyeData.verbose_data.left.gaze_origin_mm * .001f; // converted to "m", which is the space unity should be in
-            var eyeDirLeft = eyeData.verbose_data.left.gaze_direction_normalized;
-            var eyeOriginRight = eyeData.verbose_data.right.gaze_origin_mm * .001f;
-            var eyeDirRight = eyeData.verbose_data.right.gaze_direction_normalized;
-            var eyeOriginCombined = eyeData.verbose_data.combined.eye_data.gaze_origin_mm * .001f;
-            var eyeDirCombined = eyeData.verbose_data.combined.eye_data.gaze_direction_normalized;
-
-            var gazeRayLeft = new Ray(eyeOriginLeft, eyeDirLeft);
-            var gazeRayRight = new Ray(eyeOriginRight, eyeDirRight);
-            var gazeRayCombined = new Ray(eyeOriginCombined, eyeDirCombined);
-
-            clippingPlane.Raycast(gazeRayLeft, out var distLeft);
-            clippingPlane.Raycast(gazeRayRight, out var distRight);
-            clippingPlane.Raycast(gazeRayCombined, out var distComb);
-
-            var intersectionLeft = gazeRayLeft.GetPoint(distLeft);
-            var intersectionRight = gazeRayRight.GetPoint(distRight);
-            var intersectionCombined = gazeRayCombined.GetPoint(distComb);
-
-            left2Frustrum = cam.transform.TransformPoint(intersectionLeft);
-            right2Frustrum = cam.transform.TransformPoint(intersectionRight);
-            comb2Frustrum = cam.transform.TransformPoint(intersectionCombined);
+            // var cam = sim.targetCamera;
+            // var bottomLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 0, cam.nearClipPlane)));
+            // var upperLeft = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(0, 1, cam.nearClipPlane)));
+            // var upperRight = cam.transform.InverseTransformPoint(cam.ViewportToWorldPoint(new Vector3(1, 1, cam.nearClipPlane)));
+            // Plane clippingPlane = new Plane(upperRight, upperLeft, bottomLeft);
+            //
+            // var eyeOriginLeft = eyeData.verbose_data.left.gaze_origin_mm * .001f; // converted to "m", which is the space unity should be in
+            // var eyeDirLeft = eyeData.verbose_data.left.gaze_direction_normalized;
+            // var eyeOriginRight = eyeData.verbose_data.right.gaze_origin_mm * .001f;
+            // var eyeDirRight = eyeData.verbose_data.right.gaze_direction_normalized;
+            // var eyeOriginCombined = eyeData.verbose_data.combined.eye_data.gaze_origin_mm * .001f;
+            // var eyeDirCombined = eyeData.verbose_data.combined.eye_data.gaze_direction_normalized;
+            //
+            // var gazeRayLeft = new Ray(eyeOriginLeft, eyeDirLeft);
+            // var gazeRayRight = new Ray(eyeOriginRight, eyeDirRight);
+            // var gazeRayCombined = new Ray(eyeOriginCombined, eyeDirCombined);
+            //
+            // clippingPlane.Raycast(gazeRayLeft, out var distLeft);
+            // clippingPlane.Raycast(gazeRayRight, out var distRight);
+            // clippingPlane.Raycast(gazeRayCombined, out var distComb);
+            //
+            // var intersectionLeft = gazeRayLeft.GetPoint(distLeft);
+            // var intersectionRight = gazeRayRight.GetPoint(distRight);
+            // var intersectionCombined = gazeRayCombined.GetPoint(distComb);
+            //
+            // left2Frustrum = cam.transform.TransformPoint(intersectionLeft);
+            // right2Frustrum = cam.transform.TransformPoint(intersectionRight);
+            // comb2Frustrum = cam.transform.TransformPoint(intersectionCombined);
 
             SRanipal_Eye_v2.Focus(GazeIndex.COMBINE, out _, out var focusInfo, focusCastRadius, 20f, HallwayLayerMask, eyeData);
-            var frustrumPos = cam.WorldToViewportPoint(focusInfo.point);
-            frustrumPos.z = cam.nearClipPlane;
-            combConverged2Screen2Frustrum = cam.ViewportToWorldPoint(frustrumPos);
+            // var frustrumPos = cam.WorldToViewportPoint(focusInfo.point);
+            // frustrumPos.z = cam.nearClipPlane;
+            // combConverged2Screen2Frustrum = cam.ViewportToWorldPoint(frustrumPos);
             
             if (FocusSphere is null)
             {
@@ -529,26 +543,40 @@ private float focusCastRadius = .01f;
                 focusCastRadius += -0.01f;
             }
             
-            var gaze_origin_C = eyeData.verbose_data.combined.eye_data.gaze_origin_mm;
-            MinGazeDistText.text = $"minD_LR: {MinDistanceGazeVectors() * 1000f:F}mm";
-            LeftOriginText.text  = $"Left : {gaze_origin_L.x:F1},{gaze_origin_L.y:F1},{gaze_origin_L.z:F1}";
-            RightOriginText.text = $"Right: {gaze_origin_R.x:F1},{gaze_origin_R.y:F1},{gaze_origin_R.z:F1}";
-            CombOriginText.text  = $"Comb : {gaze_origin_C.x:F1},{gaze_origin_C.y:F1},{gaze_origin_C.z:F1}";
-            focusCastRadiusText.text = $"FocusRayR: {focusCastRadius:F}mm";
+            // var gaze_origin_C = eyeData.verbose_data.combined.eye_data.gaze_origin_mm;
+            // MinGazeDistText.text = $"minD_LR: {MinDistanceGazeVectors() * 1000f:F}mm";
+            // LeftOriginText.text  = $"Left : {gaze_origin_L.x:F1},{gaze_origin_L.y:F1},{gaze_origin_L.z:F1}";
+            // RightOriginText.text = $"Right: {gaze_origin_R.x:F1},{gaze_origin_R.y:F1},{gaze_origin_R.z:F1}";
+            // CombOriginText.text  = $"Comb : {gaze_origin_C.x:F1},{gaze_origin_C.y:F1},{gaze_origin_C.z:F1}";
+            // focusCastRadiusText.text = $"FocusRayR: {focusCastRadius:F}mm";
+
+            
+            var lMat = sim.targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Left);
+            var rMat = sim.targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Right);
+            var lViewportEyePos = lMat.MultiplyPoint3x4(lastFocusUpdate.point);
+            var rViewportEyePos = rMat.MultiplyPoint3x4(lastFocusUpdate.point);
+            var camVP = sim.targetCamera.WorldToViewportPoint(lastFocusUpdate.point);
+            var camSS = sim.targetCamera.WorldToScreenPoint(lastFocusUpdate.point);
+            var camMatMul = sim.targetCamera.projectionMatrix.MultiplyPoint3x4(lastFocusUpdate.point);
+            MinGazeDistText.text =     $"FP : {lastFocusUpdate.point.x:F1},{lastFocusUpdate.point.y:F1},{lastFocusUpdate.point.z:F1}";
+            LeftOriginText.text  =     $"L  : {lViewportEyePos.x:F1},{lViewportEyePos.y:F1},{lViewportEyePos.z:F1}";
+            RightOriginText.text =     $"R  : {rViewportEyePos.x:F1},{rViewportEyePos.y:F1},{rViewportEyePos.z:F1}";
+            CombOriginText.text  =     $"Cam: {camMatMul.x:F1},{camMatMul.y:F1},{camMatMul.z:F1}";
+            focusCastRadiusText.text = $"Fnc: {camVP.x:F1},{camVP.y:F1},{camVP.z:F1}";
 
             
             
-            var tmp1 = gaze_origin_L - gaze_origin_R + Vector3.Cross(gaze_direct_L.normalized, gaze_direct_R.normalized);
-            var tmp2 = gaze_direct_R - gaze_direct_L;
-            var t = tmp1.x / tmp2.x;
-            var PL = gaze_origin_L + t * gaze_direct_L;
-            var PR = gaze_origin_R + t * gaze_direct_R;
-            var posL = ConvergenceLeftPointSphere.transform.position;
-            var posR = ConvergenceRightPointSphere.transform.position;
-            var posC = ConvergenceSphere.transform.position;
-            GazePointText.text = $"L:{posL.x:F1},{posL.y:F1},{posL.z:F1}\n" +
-                                 $"R:{posR.x:F1},{posR.y:F1},{posR.z:F1}\n" +
-                                 $"C:{posC.x:F1},{posC.y:F1},{posC.z:F1}";
+            // var tmp1 = gaze_origin_L - gaze_origin_R + Vector3.Cross(gaze_direct_L.normalized, gaze_direct_R.normalized);
+            // var tmp2 = gaze_direct_R - gaze_direct_L;
+            // var t = tmp1.x / tmp2.x;
+            // var PL = gaze_origin_L + t * gaze_direct_L;
+            // var PR = gaze_origin_R + t * gaze_direct_R;
+            // var posL = ConvergenceLeftPointSphere.transform.position;
+            // var posR = ConvergenceRightPointSphere.transform.position;
+            // var posC = ConvergenceSphere.transform.position;
+            // GazePointText.text = $"L:{posL.x:F1},{posL.y:F1},{posL.z:F1}\n" +
+            //                      $"R:{posR.x:F1},{posR.y:F1},{posR.z:F1}\n" +
+            //                      $"C:{posC.x:F1},{posC.y:F1},{posC.z:F1}";
         }
 
         #endregion

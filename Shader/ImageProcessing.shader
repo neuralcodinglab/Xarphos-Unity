@@ -3,13 +3,12 @@
     Properties
     {
        // _PhosheneMapping("PhospheneMapping", 2D) = "black" { }
-       _EyePosition("EyePosition", Vector) = (0., 0., 0., 0.)
        _MainTex ("_MainTex", 2D) = "black" {}
        _Mode("Mode", Float) = 0.0
-       _GazeLocked("GazeLocked", Int) = 0
-       _ResX("Resolution_x", Int) = 512
+        _ResX("Resolution_x", Int) = 512
        _ResY("Resolution_y", Int) = 512
-
+        _EyePositionLeft("_EyePositionLeft", Vector) = (0., 0., 0., 0.)
+        _EyePositionRight("_EyePositionRight", Vector) = (0., 0., 0., 0.)
     }
 
     SubShader
@@ -47,8 +46,8 @@
             float4 _MainTex_TexelSize;
 
             // EyePosition
-            float4 _EyePosition;
-            int _GazeLocked;
+            float4 _EyePositionLeft;
+            float4 _EyePositionRight;
             float _Mode;
 
             int _ResX;
@@ -58,13 +57,14 @@
             VertexData vertex_program(AppData inputs)
             {
                 VertexData outputs;
+                
                 outputs.uv = TRANSFORM_TEX(inputs.uv, _MainTex);
                 outputs.vertex = UnityObjectToClipPos(inputs.vertex);
                 return outputs;
             }
 
             fixed4 frag(VertexData inputs) : SV_Target
-            {
+            {                
               if (_Mode==1){
                 // Sobel Edge detection
 

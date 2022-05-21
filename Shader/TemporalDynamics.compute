@@ -11,7 +11,7 @@ struct Phosphene
 
 uint2 resolution;
 int gazeAssistedSampling;
-float2 _EyePosition;
+float2 eyePos;
 float stim;
 
 float2 samplePosition;
@@ -31,23 +31,15 @@ void CSMain (uint3 id : SV_DispatchThreadID)
   Phosphene phosphene = phosphenes[id.x];
 
   // Read stimulation value from activation mask
-  if (gazeAssistedSampling == 1)
-  {
-    samplePosition = phosphene.position + _EyePosition - 0.5;
-  }
-  else
-  {
-    samplePosition = phosphene.position;
-  }
+    samplePosition = phosphene.position;// + gazeAssistedSampling == 1 ? eyePos - .5 : 0;
 
   uint2 index = uint2((uint)(samplePosition.x * resolution.x), (uint)(samplePosition.y * resolution.y));
   stim = ActivationMask[index.xy];
 
 
-
   // Compute phosphene activation as function of previous activation and stimulation
-  phosphene.activation = max(0,intensity_decay*phosphene.activation+input_effect*(stim-phosphene.trace)); //max(0,intensity_decay*phosphene.activation + input_effect*(stim-phosphene.trace)); //
-  phosphene.trace = trace_decay*phosphene.trace + trace_increase*stim;
+  phosphene.activation = max(0, intensity_decay*phosphene.activation + input_effect * (stim - phosphene.trace));
+  phosphene.trace = trace_decay*phosphene.trace + trace_increase * stim;
 
   phosphenes[id.x] = phosphene;
 }

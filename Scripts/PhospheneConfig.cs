@@ -37,7 +37,7 @@ namespace Xarphos.Scripts
         Debug.Log("Saved phosphene configuration to " + filename);
       }
 
-      public static Phosphene[] InitPhosphenesFromJSON(string filename, Vector2 FieldOfView)
+      public static Phosphene[] InitPhosphenesFromJSON(string filename)
       {
         // Initializes a struct-array with all phosphenes. Note that this struct
         // array (Phosphene) contains more properties than only position and size
@@ -47,10 +47,17 @@ namespace Xarphos.Scripts
         Phosphene[] phosphenes = new Phosphene[config.nPhosphenes];
         for (int i=0; i<config.nPhosphenes; i++)
         {
-          var x = config.eccentricities[i] * Mathf.Cos(config.azimuth_angles[i]);
-          var y = config.eccentricities[i] * Mathf.Sin(config.azimuth_angles[i]);
-          phosphenes[i].position = new Vector2(0.5f,0.5f) + new Vector2(x,y) / FieldOfView;
-          phosphenes[i].size = config.sizes[i] / FieldOfView.x;
+          // Vive Eye Pro covers 110 degrees visual field @ a resolution of 1440x1600 pixels per eye
+          // human visual field covers roughly 120 degrees, thus 15 degree eccentricity would be 1/8th of that
+          // since screen is slightly smaller than actual FOV, rescale to 110 degree FOV to get relative size of screen
+          // this is imperfect but should be a rough estimation of actual placement
+          // scale = rescale from human fov to screen fov (110 / 120), scale as fraction of total fov ( 1 / 110) = 1/ 120
+          var VisualAngleScale = 1f / 120f;
+          var x = config.eccentricities[i] * VisualAngleScale * Mathf.Cos(config.azimuth_angles[i]);
+          var y = config.eccentricities[i] * VisualAngleScale * Mathf.Sin(config.azimuth_angles[i]);
+          var pos = new Vector2(0.5f,0.5f) + new Vector2(x,y);
+          phosphenes[i].position = pos;
+          phosphenes[i].size = config.sizes[i] * VisualAngleScale;
         }
         return phosphenes;
       }
