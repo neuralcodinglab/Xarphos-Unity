@@ -9,8 +9,8 @@
     {
       float2 position;
       float size;
-      float activation;
-      float trace;
+        float activation;
+        float trace;
     };
 
 
@@ -35,8 +35,9 @@
 
     float4 DSPV_phospheneSimulation(
       StructuredBuffer<Phosphene> phospheneBuffer, 
-      int gazeLocked, 
-      float2 eyePosition, 
+      int gazeLocked,
+      float2 eyePosition,
+      int EyeIndex,
       float nPhosphenes, 
       float sizeCoefficient, 
       float brightness, 
@@ -64,7 +65,7 @@
 
           // Adjust position of phosphene relative to the gaze direction
           if (gazeLocked == 1){
-            phospheneCenter += eyePosition -0.5;
+            phospheneCenter += eyePosition - 0.5;
           }
 
           // Calculate distance to current pixel (only the activity of nearby
@@ -78,11 +79,6 @@
             pixelLuminance += phospheneActivation * DSPV_gaussian(phospheneDistance, phospheneSize);
           }
 
-        }
-
-        // Fixation dot is colored red
-        if (distance(pixelPosition, eyePosition)<0.01) {
-            pixelLuminance.r = 1/brightness;
         }
 
         return brightness * pixelLuminance; //   tex2D(phospheneMapping,xgrid +(0.5/36)); //
