@@ -26,22 +26,28 @@
             #pragma vertex vertex_program
             #pragma fragment frag
             #pragma target 3.0
+            #pragma multi_compile_instancing
 
             struct AppData
             {
                 float2 uv: TEXCOORD0;
                 float4 vertex: POSITION;
+
+                UNITY_VERTEX_INPUT_INSTANCE_ID
             };
 
             struct VertexData
             {
                 float2 uv: TEXCOORD0;
                 float4 vertex: SV_POSITION;
+
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
             };
 
 
             // Texture that determines where phosphenes should be activated
-            sampler2D _MainTex;
+            UNITY_DECLARE_SCREENSPACE_TEXTURE(_MainTex);
             float4 _MainTex_ST;
             float4 _MainTex_TexelSize;
 
@@ -57,6 +63,10 @@
             VertexData vertex_program(AppData inputs)
             {
                 VertexData outputs;
+
+                UNITY_SETUP_INSTANCE_ID(inputs);
+                UNITY_INITIALIZE_OUTPUT(VertexData, outputs);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(outputs);
                 
                 outputs.uv = TRANSFORM_TEX(inputs.uv, _MainTex);
                 outputs.vertex = UnityObjectToClipPos(inputs.vertex);
@@ -64,46 +74,21 @@
             }
 
             fixed4 frag(VertexData inputs) : SV_Target
-            {                
-              if (_Mode==1){
+            {
                 // Sobel Edge detection
-
                 // sample the texture
-        				float2 offsets[9];
-        				GetOffsets3x3(_ResX, _ResY, offsets);
+        		float2 offsets[9];
+        		GetOffsets3x3(_ResX, _ResY, offsets);
 
-        				fixed3 textures[9];
-        				for (int j = 0; j < 9; j++)
-        				{
-        					textures[j] = tex2D(_MainTex, inputs.uv + offsets[j]).rgb;
-        				}
+        		fixed3 textures[9];
+        		for (int j = 0; j < 9; j++)
+        		{
+        			textures[j] = UNITY_SAMPLE_SCREENSPACE_TEXTURE(_MainTex, inputs.uv + offsets[j]).rgb;
+        		}
 
-        				fixed4 FragColor = ApplySobel(textures);
+        		fixed4 FragColor = ApplySobel(textures);
                 float bright = 10 * Luminance(FragColor);
                 return bright;
-              }
-
-              if (_Mode==2){
-                // Edge detection
-
-                // sample the texture
-                float2 offsets[9];
-                GetOffsets3x3(_ResX, _ResY, offsets);
-
-                fixed3 textures[9];
-                for (int j = 0; j < 9; j++)
-                {
-                  textures[j] = tex2D(_MainTex, inputs.uv + offsets[j]).rgb;
-                }
-
-                float threshold = 0.1;
-                fixed4 FragColor = ApplyRobert(textures);
-                float bright = 10 * Luminance(FragColor);
-                return bright;
-              }
-
-
-              return tex2D(_MainTex, inputs.uv);
             }
             ENDCG
         }

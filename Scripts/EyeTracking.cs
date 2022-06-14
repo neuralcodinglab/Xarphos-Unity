@@ -68,6 +68,12 @@ namespace Xarphos.Scripts
 
         private void Update()
         {
+            if (!EyeTrackingAvailable)
+            {
+                sim.SetEyePosition(0.5f*Vector2.one, 0.5f*Vector2.one, 0.5f*Vector2.one);
+                return;
+            }
+            
             // ToDo: Set camera to only render clip of actual screen
 
             // Gaze Debugging
@@ -102,10 +108,12 @@ namespace Xarphos.Scripts
             var lProjection = lMat * w2c * new Vector4(lastFocusUpdate.point.x, lastFocusUpdate.point.y, lastFocusUpdate.point.z, 1f);
             var rProjection = rMat * w2c * new Vector4(lastFocusUpdate.point.x, lastFocusUpdate.point.y, lastFocusUpdate.point.z, 1f);
             // scale and shift into view space
-            var lViewSpace = (new Vector2(lProjection.x, lProjection.y) / lProjection.w) * .5f + .5f * Vector2.one;
-            var rViewSpace = (new Vector2(rProjection.x, rProjection.y) / rProjection.w) * .5f + .5f * Vector2.one;
-            Vector2 eyePos = sim.targetCamera.WorldToViewportPoint(lastFocusUpdate.point);
-            sim.SetEyePosition(lViewSpace, rViewSpace);
+            var lViewSpace = (new Vector2(lProjection.x, -lProjection.y) / lProjection.w) * .5f + .5f * Vector2.one;
+            var rViewSpace = (new Vector2(rProjection.x, -rProjection.y) / rProjection.w) * .5f + .5f * Vector2.one;
+            // and the centre position
+            var cViewSpace = sim.targetCamera.WorldToViewportPoint(lastFocusUpdate.point);
+            // Vector2 eyePos = sim.targetCamera.WorldToViewportPoint(lastFocusUpdate.point);
+            sim.SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
         }
 #endregion
 
