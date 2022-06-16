@@ -1,5 +1,6 @@
 // Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel CSMain
+#pragma kernel CalculateActivations
+#pragma kernel ClearLuminance
 
 struct Phosphene
 {
@@ -10,6 +11,7 @@ struct Phosphene
 };
 
 uint2 resolution;
+uint2 screenResolution;
 int gazeAssistedSampling;
 float2 eyePos;
 float stim;
@@ -22,24 +24,59 @@ float trace_increase;   // The habituation strength: the factor by which stimula
 float trace_decay;      // The factor by which the stimulation memory trace decreases
 
 RWStructuredBuffer<Phosphene> phosphenes;
+RWStructuredBuffer<float> pixelLuminance;
 
 RWTexture2D<float4> ActivationMask;
+RWTexture2D<float4> PhospheneTexture;
 
-[numthreads(10,1,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+[numthreads(32,1,1)]
+void CalculateActivations (uint3 id : SV_DispatchThreadID)
 {
   Phosphene phosphene = phosphenes[id.x];
 
-  // Read stimulation value from activation mask
-    samplePosition = phosphene.position;// + gazeAssistedSampling == 1 ? eyePos - .5 : 0;
+  // if gaze assist is set to 1 (on), adjust sample position to eye position
+  samplePosition = phosphene.position + gazeAssistedSampling * (eyePos - .5);
 
+  // Read stimulation value from activation mask
   uint2 index = uint2((uint)(samplePosition.x * resolution.x), (uint)(samplePosition.y * resolution.y));
   stim = ActivationMask[index.xy];
-
-
+  
   // Compute phosphene activation as function of previous activation and stimulation
   phosphene.activation = max(0, intensity_decay*phosphene.activation + input_effect * (stim - phosphene.trace));
   phosphene.trace = trace_decay*phosphene.trace + trace_increase * stim;
 
   phosphenes[id.x] = phosphene;
+
+  index = uint2((uint)(samplePosition.x * screenResolution.x), (uint)(samplePosition.y * screenResolution.y));
+  PhospheneTexture[index.xy] = float4(phosphene.activation, phosphene.activation, phosphene.activation, phosphene.size);
+
+  // calculate luminance for all surrounding pixels
+  // float sigma = phosphene.size;
+  // float r = sigma * 3;
+  // float r2 = r * r;
+  // float leftX = screenResolution.x * (samplePosition.x - r);
+  // float rightX = screenResolution.x * (samplePosition.x + r);
+  // float leftY = screenResolution.x * (samplePosition.x - r);
+  // float rightY = screenResolution.x * (samplePosition.x + r);
+  //
+  // float gaussCenter = 1 / (sigma * 3.4954077);
+  // float gaussScale = 2 * sigma * sigma;
+  //
+  // for (int xPos = leftX; xPos <= rightX; xPos += 1)
+  // {
+  //   for (int yPos = leftY; yPos <= rightY; yPos += 1)
+  //   {
+  //     float d2 = yPos * yPos + xPos * xPos;
+  //     if (r2 > d2)
+  //     {
+  //       pixelLuminance[xPos + yPos * screenResolution.x] += phosphene.activation * gaussCenter * exp(-d2 / gaussScale);
+  //     }
+  //   }
+  // }
+}
+
+[numthreads(10,10,1)]
+void ClearLuminance(uint3 id : SV_DispatchThreadID)
+{
+  pixelLuminance[id.x + id.y * screenResolution.x] = 0;
 }

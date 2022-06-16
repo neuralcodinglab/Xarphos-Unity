@@ -4,11 +4,8 @@
     {
        // _PhosheneMapping("PhospheneMapping", 2D) = "black" { }
        _MainTex ("_MainTex", 2D) = "black" {}
-       _Mode("Mode", Float) = 0.0
-        _ResX("Resolution_x", Int) = 512
+       _ResX("Resolution_x", Int) = 512
        _ResY("Resolution_y", Int) = 512
-        _EyePositionLeft("_EyePositionLeft", Vector) = (0., 0., 0., 0.)
-        _EyePositionRight("_EyePositionRight", Vector) = (0., 0., 0., 0.)
     }
 
     SubShader
@@ -50,11 +47,6 @@
             UNITY_DECLARE_SCREENSPACE_TEXTURE(_MainTex);
             float4 _MainTex_ST;
             float4 _MainTex_TexelSize;
-
-            // EyePosition
-            float4 _EyePositionLeft;
-            float4 _EyePositionRight;
-            float _Mode;
 
             int _ResX;
             int _ResY;

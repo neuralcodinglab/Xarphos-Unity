@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.IO;
 using System.Collections.Generic;
+using System.Linq;
 
 
 namespace Xarphos.Scripts
@@ -48,16 +49,17 @@ namespace Xarphos.Scripts
         for (int i=0; i<config.nPhosphenes; i++)
         {
           // Vive Eye Pro covers 110 degrees visual field @ a resolution of 1440x1600 pixels per eye
-          // human visual field covers roughly 120 degrees, thus 15 degree eccentricity would be 1/8th of that
           // since screen is slightly smaller than actual FOV, rescale to 110 degree FOV to get relative size of screen
           // this is imperfect but should be a rough estimation of actual placement
-          // scale = rescale from human fov to screen fov (110 / 120), scale as fraction of total fov ( 1 / 110) = 1/ 120
-          var VisualAngleScale = 1f / 120f;
-          var x = config.eccentricities[i] * VisualAngleScale * Mathf.Cos(config.azimuth_angles[i]);
-          var y = config.eccentricities[i] * VisualAngleScale * Mathf.Sin(config.azimuth_angles[i]);
-          var pos = new Vector2(0.5f,0.5f) + new Vector2(x,y);
+          // ----
+          // calculate carthesian coordinates of phosphene in [0,1] ; eccentricities have fovea at 0,0
+          // so move coordinates by 60 to and scale by 120 to get relative position
+          var x = (config.eccentricities[i] * Mathf.Cos(config.azimuth_angles[i]) + 60f) / 120f;
+          var y = (config.eccentricities[i] * Mathf.Sin(config.azimuth_angles[i]) + 60f) / 120f;
+          var pos = new Vector2(x,y);
           phosphenes[i].position = pos;
-          phosphenes[i].size = config.sizes[i] * VisualAngleScale;
+          // scale size from dav to fraction of fov
+          phosphenes[i].size = config.sizes[i] / 120f;
         }
         return phosphenes;
       }

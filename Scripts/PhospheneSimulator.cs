@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -30,6 +31,7 @@ namespace Xarphos.Scripts
 
         // Render textures
         protected RenderTexture ActivationMask;
+        protected RenderTexture PhospheneTexture;
 
         // For reading phosphene configuration from JSON
         [SerializeField] private string phospheneConfigFile;
@@ -57,25 +59,30 @@ namespace Xarphos.Scripts
         [SerializeField]
         private float traceDecay = 0.9f; // The factor by which the stimulation memory trace decreases
 
-        private Vector2Int viveResolution, maskResolution, cutOutResolution;
-        private Vector2 screenSpacePart;
+        private Vector2Int viveResolution, maskResolution;
         private Vector2 eyePosLeft, eyePosRight, eyePosCentre;
+        
+        private bool setImageProcessingResolution = false;
         
         #region Shader Properties Name-To-Int
         private static readonly int PhosMatMask = Shader.PropertyToID("_ActivationMask");
         private static readonly int PhosMatPhosphenes = Shader.PropertyToID("phosphenes");
+        private static readonly int PhosMatPhospheneTexture = Shader.PropertyToID("PhospheneTexture");
         private static readonly int PhosMatNPhosphenes = Shader.PropertyToID("_nPhosphenes");
         private static readonly int PhosMatFilter = Shader.PropertyToID("_PhospheneFilter");
         private static readonly int PhosMatGazeLocked = Shader.PropertyToID("_GazeLocked");
         private static readonly int PhosMatGazeAssisted = Shader.PropertyToID("_GazeAssisted");
+        private static readonly int PhosMatScreenResolutionX = Shader.PropertyToID("_ScreenResolutionX");
           
         private static readonly int TempDynResolution = Shader.PropertyToID("resolution");
+        private static readonly int TempDynScreenResolution = Shader.PropertyToID("screenResolution");
         private static readonly int TempDynMask = Shader.PropertyToID("ActivationMask");
         private static readonly int TempDynInputEffect = Shader.PropertyToID("input_effect");
         private static readonly int TempDynIntensityDecay = Shader.PropertyToID("intensity_decay");
         private static readonly int TempDynTraceIncrease = Shader.PropertyToID("trace_increase");
         private static readonly int TempDynTraceDecay = Shader.PropertyToID("trace_decay");
         private static readonly int TempDynPhosphenes = Shader.PropertyToID("phosphenes");
+        private static readonly int TempDynPhospheneTexture = Shader.PropertyToID("PhospheneTexture");
         private static readonly int TempDynGazeAssistedSampling = Shader.PropertyToID("gazeAssistedSampling");
         private static readonly int TempDynEyePos = Shader.PropertyToID("eyePos");
         
@@ -118,9 +125,6 @@ namespace Xarphos.Scripts
             PhospheneMaterial.SetBuffer(PhosMatPhosphenes, _phospheneBuffer);
             PhospheneMaterial.SetInt(PhosMatNPhosphenes, _nPhosphenes);
             PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
-            PhospheneMaterial.SetBuffer(PhosMatPhosphenes, _phospheneBuffer);
-            PhospheneMaterial.SetInt(PhosMatNPhosphenes, _nPhosphenes);
-            PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
 
             temporalDynamicsCs.SetBuffer(0, TempDynPhosphenes, _phospheneBuffer);
             // Set the default EyeTrackingCondition (Ignore Gaze)
@@ -138,95 +142,57 @@ namespace Xarphos.Scripts
 
         private void OnRenderImage(RenderTexture src, RenderTexture target)
         {
-          if (target == null) return;
+          if (target == null || !setImageProcessingResolution) return;
           // in between texture to put processed image on before blitting from this to target
           var preTargetPing = RenderTexture.GetTemporary(target.descriptor);
           // if phosphene simulator is off, only need to run image through image processing for edge detection
-          if ((int) _phospheneFiltering == 0)
-          {
-            if (_edgeDetection)
-              Graphics.Blit(src, preTargetPing, ImageProcessingMaterial);
-            // if edge detection is off, just blit without any processing
-            else
-              Graphics.Blit(src, preTargetPing);
-          }
+
+          if (_edgeDetection)
+            Graphics.Blit(src, preTargetPing, ImageProcessingMaterial);
+          // if edge detection is off, just blit without any processing
           else
+            Graphics.Blit(src, preTargetPing);
+
+          if ((int)_phospheneFiltering != 0)
           {
-            // determine rectangle for cut out and placement
-            // point in the middle of the screen (never changes)
-            Vector2 centrePxl = .5f * (Vector2)viveResolution;
-            // pixel currently on eye position
-            // ToDo: Invert eyeposcentre.y 
-            Vector2 eyePosPxl = Vector2.Scale(eyePosCentre, viveResolution);;
-            // since rectangles are defined by corner, width & height; calculate corner from centre
-            Vector2Int cornerCentre = Vector2Int.RoundToInt(centrePxl - cutOutResolution / 2);
-            Vector2Int cornerEyePos = Vector2Int.RoundToInt(eyePosPxl - cutOutResolution / 2);
-            // short hands for width & height
-            int w = cutOutResolution.x;
-            int h = cutOutResolution.y;
-
-            // texture to store cut out from camera view on
-            var cutOutTexture = RenderTexture.GetTemporary(w, h, src.depth, src.graphicsFormat);
-
-            // in assisted sampling the cut out happens around the eye position
-            if (eyeTrackingCondition == EyeTracking.EyeTrackingConditions.GazeAssistedSampling)
-            {
-              Graphics.CopyTexture(
-                src, 0, 0, cornerEyePos.x, cornerEyePos.y, w, h,
-                cutOutTexture, 0, 0, 0, 0
-              );
-            } 
-            // in the other conditions cut out happens from the center of the camera view
-            else
-            {
-              Graphics.CopyTexture(
-                src, 0, 0, cornerCentre.x, cornerCentre.y, w, h,
-                cutOutTexture, 0, 0, 0, 0
-              );
-            }
+            // blit to activation mask for compression
+            Graphics.Blit(preTargetPing, ActivationMask);
+            RenderTexture.ReleaseTemporary(preTargetPing);
+            preTargetPing = RenderTexture.GetTemporary(target.descriptor);
             
-            // blit to activation mask, effectively down-scaling the cut out for better performance
-            Graphics.Blit(cutOutTexture, ActivationMask);
-            var cutInTexture = new RenderTexture(cutOutTexture.descriptor);
-            RenderTexture.ReleaseTemporary(cutOutTexture);
-            // run simulation on scaled down cut out
-            temporalDynamicsCs.Dispatch(0, _phosphenes.Length / 10, 1, 1);
-            // Render Simulation back onto CutOut, ToDo: This might need to be a new temp texture
-            // using texture of same size as cut out should avoid distortions
-            Graphics.Blit(null, cutInTexture, PhospheneMaterial);
-            
-            // Copy the simulation of the cut-out back onto the screen
-            // in gaze-ignored we render the simulation in the centre of the screen
-            if (eyeTrackingCondition == EyeTracking.EyeTrackingConditions.GazeIgnored)
-            {
-              Graphics.CopyTexture(
-                cutInTexture, 0, 0, 0, 0, w, h,
-                preTargetPing, 0, 0, cornerCentre.x, cornerCentre.y
-              );
-            }
-            // in the gaze-tracked conditions rendering is happening around the foveal point
-            else
-            {
-              // using an extra render texture, because we will need to adjust for each eye's position
-              var preTargetPong = RenderTexture.GetTemporary(target.descriptor);
-              Graphics.CopyTexture(
-                cutInTexture, 0, 0, 0, 0, w, h,
-                preTargetPong, 0, 0, cornerEyePos.x, cornerEyePos.y
-              );
-              // using a shader to correct eye position // ToDo: Check reliability
-              Graphics.Blit(preTargetPong, preTargetPing, eyePosCorrectionMaterial);
-              RenderTexture.ReleaseTemporary(preTargetPong);
-            }
-            RenderTexture.ReleaseTemporary(cutInTexture);
+            // run simulation on scaled texture
+            temporalDynamicsCs.Dispatch(0, Mathf.CeilToInt(_phosphenes.Length / 32), 1, 1);
+            // render phosphene simulation
+            // Graphics.Blit(null, preTargetPing, PhospheneMaterial);
+            Graphics.Blit(PhospheneTexture, preTargetPing);
           }
-          
+
           // lastly render the focus dot on top
           Graphics.Blit(preTargetPing, target, FocusDotMaterial);
 
           RenderTexture.ReleaseTemporary(preTargetPing);
         }
 
-        private void OnDisable(){
+        private void OnPreRender()
+        {
+          if (setImageProcessingResolution && (int)_phospheneFiltering != 0)
+          {
+            PhospheneTexture = RenderTexture.GetTemporary(XRSettings.eyeTextureDesc);
+            PhospheneTexture.enableRandomWrite = true;
+            temporalDynamicsCs.SetTexture(0, TempDynPhospheneTexture, PhospheneTexture);
+            PhospheneMaterial.SetTexture(PhosMatPhospheneTexture, PhospheneTexture);
+          }
+        }
+
+        private void OnPostRender()
+        {
+          if (setImageProcessingResolution && (int)_phospheneFiltering != 0)
+          {
+            RenderTexture.ReleaseTemporary(PhospheneTexture);
+          }
+        }
+
+        private void OnDestroy(){
           _phospheneBuffer.Release();
         }
 
@@ -316,45 +282,65 @@ namespace Xarphos.Scripts
           eyePosCorrectionMaterial.SetVector(ShPropEyePosRight, eyePosRight);
           eyePosCorrectionMaterial.SetVector(ShPropEyePosCentre, eyePosCentre);
         }
-
-        private bool setImageProcessingResoultion = false;
+      
         protected void Update()
         {
-          if (!setImageProcessingResoultion && XRSettings.eyeTextureWidth != 0)
+          if (!setImageProcessingResolution && XRSettings.eyeTextureWidth != 0)
           {
             var w = XRSettings.eyeTextureWidth;
             var h = XRSettings.eyeTextureHeight;
             viveResolution = new Vector2Int(w, h);
             ImageProcessingMaterial.SetInt(ImgProcResX, w);
             ImageProcessingMaterial.SetInt(ImgProcResY, h);
-            setImageProcessingResoultion = true;
+            setImageProcessingResolution = true;
             Debug.Log($"Set Res to: {w}, {h}");
+
+            var compressionFactor = 4;
+            maskResolution = viveResolution / compressionFactor;
             
-            // max eccentricity (in cfg3: ~ 30 deg from fovea)
-            var maxEcc = PhospheneConfig.load(phospheneConfigFile).eccentricities.Max();
-            // fraction of FOV covered is max eccentricity in both direction / total FOV
-            // Human FOV is ~120 deg
-            var screenFraction = (maxEcc*2) / 120f;
-            var compression = .4f;
-            var maskW = Mathf.RoundToInt(w * screenFraction);
-            var maskH = Mathf.RoundToInt(h * screenFraction);
-            cutOutResolution = new Vector2Int(maskW, maskH);
-            maskResolution = new Vector2Int(
-              Mathf.RoundToInt(maskW * compression), 
-              Mathf.RoundToInt(maskH*compression)
-            );
-            Debug.Log($"Set Mask to: {maskW}, {maskH}");
-            
-            ActivationMask = new RenderTexture(maskW, maskH, XRSettings.eyeTextureDesc.depthBufferBits);
+            ActivationMask = new RenderTexture(maskResolution.x, maskResolution.y, XRSettings.eyeTextureDesc.depthBufferBits);
             ActivationMask.enableRandomWrite = true;
             ActivationMask.Create();
             
             // Initialize the render textures & Set the shaders with the shared render textures
-            temporalDynamicsCs.SetInts(TempDynResolution, maskW, maskH);
-
+            temporalDynamicsCs.SetInts(TempDynScreenResolution, viveResolution.x, viveResolution.y);  
+            temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
             temporalDynamicsCs.SetTexture(0,TempDynMask, ActivationMask);
 
-            PhospheneMaterial.SetTexture(PhosMatMask, ActivationMask);
+            // set up buffer to hold pixel activations
+            PhospheneMaterial.SetInt(PhosMatScreenResolutionX, viveResolution.x);
+            
+            // ToDo: 2D array [nPhosphenes x PixelInfluences]
+            // var influences = new List<Vector2Int>[_nPhosphenes];
+            //
+            // for (uint i = 0; i < _nPhosphenes; i += 1)
+            // {
+            //   var ph = _phosphenes[i];
+            //   Vector2Int pxlPos = Vector2Int.RoundToInt(Vector2.Scale(ph.position, viveResolution));
+            //   var r = Mathf.RoundToInt(ph.size * viveResolution.x);
+            //
+            //   for (int xOffset = 0; xOffset < r; xOffset += 1)
+            //   {
+            //     for (int yOffset = 0; yOffset < r; yOffset += 1)
+            //     {
+            //       if ((xOffset * xOffset + yOffset * yOffset) >= (r * r)) continue;
+            //       // position is inside of circle
+            //       var offsets = new[] { (xOffset, yOffset), (xOffset,-yOffset), (-xOffset, yOffset), (-xOffset,-yOffset) };
+            //       foreach (var offset in offsets)
+            //       {
+            //         int idx = 0;
+            //         var xPos = pxlPos.x + offset.Item1;
+            //         var yPos = pxlPos.y + offset.Item2;
+            //         if (xPos < 0 || xPos > w || yPos < 0 || yPos > h) continue;
+            //
+            //         influences[i] ??= new List<Vector2Int>();
+            //         influences[i].Add(new Vector2Int(xPos, yPos));
+            //       }
+            //     }
+            //   }
+            // }
+            // Debug.Log($"Max: {influences.Max(x => x.Count)}");
+            
           }
           
           if (manualEyePos)

@@ -34,14 +34,12 @@
 
 
     float4 DSPV_phospheneSimulation(
-      StructuredBuffer<Phosphene> phospheneBuffer, 
+      StructuredBuffer<Phosphene> phospheneBuffer,
       int gazeLocked,
       float2 eyePosition,
-      int EyeIndex,
       float nPhosphenes, 
       float sizeCoefficient, 
       float brightness, 
-      float dropout, 
       float2 pixelPosition
     ) {
         // Output luminance for current pixel
@@ -55,11 +53,13 @@
         float phospheneSize;
         float phospheneActivation;
 
+        float sqrtN = sqrt(nPhosphenes);
+
         // Loop over all phosphenes
         for (int i = 0; i<nPhosphenes; i++){
 
           /// Read phosphene from databuffer
-          phospheneSize = phospheneBuffer[i].size * sizeCoefficient;
+          phospheneSize = phospheneBuffer[i].size;
           phospheneCenter = phospheneBuffer[i].position;
           phospheneActivation = phospheneBuffer[i].activation;
 
@@ -70,7 +70,7 @@
 
           // Calculate distance to current pixel (only the activity of nearby
           // phosphenes have an effect on the current pixel intensity).
-          phospheneDistance = distance(phospheneCenter,pixelPosition);
+          phospheneDistance = distance(phospheneCenter, pixelPosition);
 
           // Rule of thumb:
           // at a distacnce of > 3 sigmas, the tail of the gaussian is unobservable
