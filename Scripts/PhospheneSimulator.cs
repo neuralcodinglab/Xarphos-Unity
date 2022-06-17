@@ -31,7 +31,6 @@ namespace Xarphos.Scripts
 
         // Render textures
         protected RenderTexture ActivationMask;
-        protected RenderTexture PhospheneTexture;
 
         // For reading phosphene configuration from JSON
         [SerializeField] private string phospheneConfigFile;
@@ -58,10 +57,15 @@ namespace Xarphos.Scripts
         private float traceIncrease = 0.1f; // The habituation strength: the factor by which stimulation leads to buildup of memory trace
         [SerializeField]
         private float traceDecay = 0.9f; // The factor by which the stimulation memory trace decreases
-
-        private Vector2Int viveResolution, maskResolution;
+        
         private Vector2 eyePosLeft, eyePosRight, eyePosCentre;
         
+        // simulation auxillaries
+        protected RenderTexture PhospheneTexture;
+        private Vector2Int viveResolution, maskResolution;
+        private int kernelActivations, kernelSpread, kernelClean;
+        private int threadX, threadY;
+
         private bool setImageProcessingResolution = false;
         
         #region Shader Properties Name-To-Int
@@ -83,6 +87,7 @@ namespace Xarphos.Scripts
         private static readonly int TempDynTraceDecay = Shader.PropertyToID("trace_decay");
         private static readonly int TempDynPhosphenes = Shader.PropertyToID("phosphenes");
         private static readonly int TempDynPhospheneTexture = Shader.PropertyToID("PhospheneTexture");
+        private static readonly int TempDynPhospheneRenderTexture = Shader.PropertyToID("PhospheneRender");
         private static readonly int TempDynGazeAssistedSampling = Shader.PropertyToID("gazeAssistedSampling");
         private static readonly int TempDynEyePos = Shader.PropertyToID("eyePos");
         
@@ -131,6 +136,10 @@ namespace Xarphos.Scripts
             PhospheneMaterial.SetInt(PhosMatGazeLocked, 0);
             temporalDynamicsCs.SetInt(TempDynGazeAssistedSampling, 0);
 
+            kernelActivations = temporalDynamicsCs.FindKernel("CalculateActivations");
+            kernelSpread = temporalDynamicsCs.FindKernel("SpreadActivations");
+            kernelClean = temporalDynamicsCs.FindKernel("ClearActivations");
+            
             FocusDotMaterial = new Material(Shader.Find("Custom/FocusDot"));
             eyePosCorrectionMaterial = new Material(Shader.Find("Custom/EyePositionCorrection"));
         }
@@ -143,6 +152,7 @@ namespace Xarphos.Scripts
         private void OnRenderImage(RenderTexture src, RenderTexture target)
         {
           if (target == null || !setImageProcessingResolution) return;
+
           // in between texture to put processed image on before blitting from this to target
           var preTargetPing = RenderTexture.GetTemporary(target.descriptor);
           // if phosphene simulator is off, only need to run image through image processing for edge detection
@@ -157,14 +167,22 @@ namespace Xarphos.Scripts
           {
             // blit to activation mask for compression
             Graphics.Blit(preTargetPing, ActivationMask);
-            RenderTexture.ReleaseTemporary(preTargetPing);
-            preTargetPing = RenderTexture.GetTemporary(target.descriptor);
+            // RenderTexture.ReleaseTemporary(preTargetPing);
+            // preTargetPing = RenderTexture.GetTemporary(target.descriptor);
             
             // run simulation on scaled texture
-            temporalDynamicsCs.Dispatch(0, Mathf.CeilToInt(_phosphenes.Length / 32), 1, 1);
+            var phospheneRenderTexture = RenderTexture.GetTemporary(target.descriptor);
+            phospheneRenderTexture.enableRandomWrite = true;
+            temporalDynamicsCs.SetTexture(kernelActivations, TempDynPhospheneRenderTexture, phospheneRenderTexture);
+            temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneRenderTexture, phospheneRenderTexture);
+            temporalDynamicsCs.SetTexture(kernelClean, TempDynPhospheneRenderTexture, phospheneRenderTexture);
+            temporalDynamicsCs.Dispatch(kernelActivations, Mathf.CeilToInt(_nPhosphenes / 32), 1, 1);
             // render phosphene simulation
-            // Graphics.Blit(null, preTargetPing, PhospheneMaterial);
-            Graphics.Blit(PhospheneTexture, preTargetPing);
+            temporalDynamicsCs.Dispatch(kernelSpread, threadX, threadY, 1);
+            Graphics.Blit(phospheneRenderTexture, preTargetPing);
+            RenderTexture.ReleaseTemporary(phospheneRenderTexture);
+            // clean simulation texture
+            temporalDynamicsCs.Dispatch(kernelClean, threadX, threadY, 1);
           }
 
           // lastly render the focus dot on top
@@ -173,29 +191,11 @@ namespace Xarphos.Scripts
           RenderTexture.ReleaseTemporary(preTargetPing);
         }
 
-        private void OnPreRender()
-        {
-          if (setImageProcessingResolution && (int)_phospheneFiltering != 0)
-          {
-            PhospheneTexture = RenderTexture.GetTemporary(XRSettings.eyeTextureDesc);
-            PhospheneTexture.enableRandomWrite = true;
-            temporalDynamicsCs.SetTexture(0, TempDynPhospheneTexture, PhospheneTexture);
-            PhospheneMaterial.SetTexture(PhosMatPhospheneTexture, PhospheneTexture);
-          }
-        }
-
-        private void OnPostRender()
-        {
-          if (setImageProcessingResolution && (int)_phospheneFiltering != 0)
-          {
-            RenderTexture.ReleaseTemporary(PhospheneTexture);
-          }
-        }
-
         private void OnDestroy(){
           _phospheneBuffer.Release();
         }
 
+        #region Input Handling
         public void NextSurfaceReplacementMode(InputAction.CallbackContext ctx) => NextSurfaceReplacementMode();
         
         private void NextSurfaceReplacementMode(){
@@ -262,6 +262,7 @@ namespace Xarphos.Scripts
           GazeLocking = 1-GazeLocking;
           PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
         }
+      #endregion
 
         public void SetEyePosition(Vector2 leftViewport, Vector2 rightViewport, Vector2 centreViewport)
         {
@@ -287,12 +288,13 @@ namespace Xarphos.Scripts
         {
           if (!setImageProcessingResolution && XRSettings.eyeTextureWidth != 0)
           {
+            setImageProcessingResolution = true;
+            
             var w = XRSettings.eyeTextureWidth;
             var h = XRSettings.eyeTextureHeight;
             viveResolution = new Vector2Int(w, h);
             ImageProcessingMaterial.SetInt(ImgProcResX, w);
             ImageProcessingMaterial.SetInt(ImgProcResY, h);
-            setImageProcessingResolution = true;
             Debug.Log($"Set Res to: {w}, {h}");
 
             var compressionFactor = 4;
@@ -305,10 +307,21 @@ namespace Xarphos.Scripts
             // Initialize the render textures & Set the shaders with the shared render textures
             temporalDynamicsCs.SetInts(TempDynScreenResolution, viveResolution.x, viveResolution.y);  
             temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
-            temporalDynamicsCs.SetTexture(0,TempDynMask, ActivationMask);
+            temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
+
+            PhospheneTexture = new RenderTexture(viveResolution.x, viveResolution.y, 0);
+            PhospheneTexture.enableRandomWrite = true;
+            PhospheneTexture.Create();
+            temporalDynamicsCs.SetTexture(kernelActivations,TempDynPhospheneTexture, PhospheneTexture);
+            temporalDynamicsCs.SetTexture(kernelSpread,TempDynPhospheneTexture, PhospheneTexture);
+            temporalDynamicsCs.SetTexture(kernelClean,TempDynPhospheneTexture, PhospheneTexture);
 
             // set up buffer to hold pixel activations
             PhospheneMaterial.SetInt(PhosMatScreenResolutionX, viveResolution.x);
+
+            temporalDynamicsCs.GetKernelThreadGroupSizes(kernelSpread, out var xGroup, out var yGroup, out _);
+            threadX = Mathf.CeilToInt(viveResolution.x / xGroup);
+            threadY = Mathf.CeilToInt(viveResolution.y / yGroup);
             
             // ToDo: 2D array [nPhosphenes x PixelInfluences]
             // var influences = new List<Vector2Int>[_nPhosphenes];
@@ -340,7 +353,7 @@ namespace Xarphos.Scripts
             //   }
             // }
             // Debug.Log($"Max: {influences.Max(x => x.Count)}");
-            
+
           }
           
           if (manualEyePos)

@@ -54,12 +54,12 @@ namespace Xarphos.Scripts
           // ----
           // calculate carthesian coordinates of phosphene in [0,1] ; eccentricities have fovea at 0,0
           // so move coordinates by 60 to and scale by 120 to get relative position
-          var x = (config.eccentricities[i] * Mathf.Cos(config.azimuth_angles[i]) + 60f) / 120f;
-          var y = (config.eccentricities[i] * Mathf.Sin(config.azimuth_angles[i]) + 60f) / 120f;
+          var x = (config.eccentricities[i] / 2f * Mathf.Cos(config.azimuth_angles[i]) + 60f) / 120f;
+          var y = (config.eccentricities[i] / 2f * Mathf.Sin(config.azimuth_angles[i]) + 60f) / 120f;
           var pos = new Vector2(x,y);
           phosphenes[i].position = pos;
           // scale size from dav to fraction of fov
-          phosphenes[i].size = config.sizes[i] / 120f;
+          phosphenes[i].size = config.sizes[i] / 2f / 120f;
         }
         return phosphenes;
       }

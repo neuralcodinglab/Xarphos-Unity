@@ -1,6 +1,7 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CalculateActivations
-#pragma kernel ClearLuminance
+#pragma kernel SpreadActivations
+#pragma kernel ClearActivations
 
 struct Phosphene
 {
@@ -13,7 +14,8 @@ struct Phosphene
 uint2 resolution;
 uint2 screenResolution;
 int gazeAssistedSampling;
-float2 eyePos;
+float2 eyePosL;
+float2 eyePosR;
 float stim;
 
 float2 samplePosition;
@@ -28,18 +30,20 @@ RWStructuredBuffer<float> pixelLuminance;
 
 RWTexture2D<float4> ActivationMask;
 RWTexture2D<float4> PhospheneTexture;
+RWTexture2DArray<float4> PhospheneRender;
 
-[numthreads(32,1,1)]
+[numthreads(32,1,2)]
 void CalculateActivations (uint3 id : SV_DispatchThreadID)
 {
   Phosphene phosphene = phosphenes[id.x];
 
   // if gaze assist is set to 1 (on), adjust sample position to eye position
+  float2 eyePos = lerp(eyePosL, eyePosR, id.z);
   samplePosition = phosphene.position + gazeAssistedSampling * (eyePos - .5);
 
   // Read stimulation value from activation mask
   uint2 index = uint2((uint)(samplePosition.x * resolution.x), (uint)(samplePosition.y * resolution.y));
-  stim = ActivationMask[index.xy];
+  stim = ActivationMask[index.xy].x;
   
   // Compute phosphene activation as function of previous activation and stimulation
   phosphene.activation = max(0, intensity_decay*phosphene.activation + input_effect * (stim - phosphene.trace));
@@ -47,36 +51,81 @@ void CalculateActivations (uint3 id : SV_DispatchThreadID)
 
   phosphenes[id.x] = phosphene;
 
-  index = uint2((uint)(samplePosition.x * screenResolution.x), (uint)(samplePosition.y * screenResolution.y));
-  PhospheneTexture[index.xy] = float4(phosphene.activation, phosphene.activation, phosphene.activation, phosphene.size);
-
-  // calculate luminance for all surrounding pixels
-  // float sigma = phosphene.size;
-  // float r = sigma * 3;
-  // float r2 = r * r;
-  // float leftX = screenResolution.x * (samplePosition.x - r);
-  // float rightX = screenResolution.x * (samplePosition.x + r);
-  // float leftY = screenResolution.x * (samplePosition.x - r);
-  // float rightY = screenResolution.x * (samplePosition.x + r);
-  //
-  // float gaussCenter = 1 / (sigma * 3.4954077);
-  // float gaussScale = 2 * sigma * sigma;
-  //
-  // for (int xPos = leftX; xPos <= rightX; xPos += 1)
-  // {
-  //   for (int yPos = leftY; yPos <= rightY; yPos += 1)
-  //   {
-  //     float d2 = yPos * yPos + xPos * xPos;
-  //     if (r2 > d2)
-  //     {
-  //       pixelLuminance[xPos + yPos * screenResolution.x] += phosphene.activation * gaussCenter * exp(-d2 / gaussScale);
-  //     }
-  //   }
-  // }
+  // ToDo: adjust for eye offset; .5,.5 on 2D screen needs to be transformed to eye space?
+  uint2 idx = uint2((uint)(samplePosition.x * screenResolution.x), (uint)(samplePosition.y * screenResolution.x));
+  PhospheneTexture[idx.xy] =  float4(phosphene.activation, phosphene.activation, phosphene.activation, phosphene.size);
 }
 
-[numthreads(10,10,1)]
-void ClearLuminance(uint3 id : SV_DispatchThreadID)
+float Gaussian(float d, float sigma)
 {
-  pixelLuminance[id.x + id.y * screenResolution.x] = 0;
+  float c = 1.0 / (sigma * 2.50662);
+  return c * exp( -(d * d) / (2 * sigma * sigma) );
+}
+
+#define xThreads 32
+#define yThreads 32
+
+[numthreads(xThreads,yThreads,1)]
+void SpreadActivations(uint3 id : SV_DispatchThreadID)
+{
+  // ToDo: Take Eye position into account
+  // ToDo: figure out why radius is bonkers (scale wrong?)
+  float4 pixelVal = PhospheneTexture[id.xy];
+  const float size = pixelVal.w;
+  if (size < 0.01) { return; }
+
+  uint3 idx = uint3(id.x, id.y, 0);
+  PhospheneRender[idx] = float4(pixelVal.x, pixelVal.y, pixelVal.z, 1);
+  idx.z = 1;
+  PhospheneRender[idx] = float4(pixelVal.x, pixelVal.y, pixelVal.z, 1);
+  return;
+  const float scale = Gaussian(0, size);
+
+  const uint maxr = size * screenResolution.x / 10;
+  const uint maxr2 = maxr * maxr;
+
+  const uint resX2 = screenResolution.x * screenResolution.x;
+  
+  for (uint xOff=0; xOff < maxr; xOff++)
+  {
+    for (uint yOff=0; yOff < maxr; yOff++)
+    {
+      const uint rOff2 = yOff*yOff + xOff*xOff;
+      if (rOff2 < maxr2)
+      {
+        float spread = Gaussian(sqrt(rOff2 / resX2), size) / scale;
+        
+        idx = uint3(id.x + xOff, id.y + yOff, 0);
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+        idx.z = 1;
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+
+        idx = uint3(id.x + xOff, id.y - yOff, 0);
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+        idx.z = 1;
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+
+        idx = uint3(id.x - xOff, id.y + yOff, 0);
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+        idx.z = 1;
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+
+        idx = uint3(id.x - xOff, id.y - yOff, 0);
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+        idx.z = 1;
+        PhospheneRender[idx] += float4(spread, spread, spread, 0);
+      }
+    }
+  }
+}
+
+
+[numthreads(xThreads,yThreads,1)]
+void ClearActivations(uint3 id : SV_DispatchThreadID)
+{
+  uint3 idx = uint3(id.x, id.y, 0);
+  PhospheneTexture[idx.xy] = float4(0,0,0,0);
+  PhospheneRender[idx] = float4(0,0,0,1);
+  idx.z = 1;
+  PhospheneRender[idx] = float4(0,0,0,1);
 }
