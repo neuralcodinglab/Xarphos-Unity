@@ -7,10 +7,10 @@
 
     struct Phosphene
     {
-      float2 position;
-      float size;
-        float activation;
-        float trace;
+        float2 position;
+        float size;
+        float2 activation;
+        float2 trace;
     };
 
 
@@ -61,7 +61,7 @@
           /// Read phosphene from databuffer
           phospheneSize = phospheneBuffer[i].size;
           phospheneCenter = phospheneBuffer[i].position;
-          phospheneActivation = phospheneBuffer[i].activation;
+          phospheneActivation = phospheneBuffer[i].activation.x;
 
           // Adjust position of phosphene relative to the gaze direction
           if (gazeLocked == 1){

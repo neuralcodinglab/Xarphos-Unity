@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
 using  UnityEngine.InputSystem;
+using UnityEngine.Rendering;
 using UnityEngine.XR;
 
 namespace Xarphos.Scripts
@@ -113,7 +114,7 @@ namespace Xarphos.Scripts
             // Initialize the array of phosphenes
             _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
             _nPhosphenes = _phosphenes.Length;
-            _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*5);
+            _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*7);
             _phospheneBuffer.SetData(_phosphenes);
 
             // Initialize materials with shaders
@@ -142,6 +143,8 @@ namespace Xarphos.Scripts
             
             FocusDotMaterial = new Material(Shader.Find("Custom/FocusDot"));
             eyePosCorrectionMaterial = new Material(Shader.Find("Custom/EyePositionCorrection"));
+            
+            FocusDotMaterial.SetInt("_RenderPoint", 1);
         }
 
         private void Start()
@@ -151,6 +154,7 @@ namespace Xarphos.Scripts
 
         private void OnRenderImage(RenderTexture src, RenderTexture target)
         {
+          InitialiseTextures(src);
           if (target == null || !setImageProcessingResolution) return;
 
           // in between texture to put processed image on before blitting from this to target
@@ -166,21 +170,28 @@ namespace Xarphos.Scripts
           if ((int)_phospheneFiltering != 0)
           {
             // blit to activation mask for compression
-            Graphics.Blit(preTargetPing, ActivationMask);
-            // RenderTexture.ReleaseTemporary(preTargetPing);
-            // preTargetPing = RenderTexture.GetTemporary(target.descriptor);
+            ActivationMask = RenderTexture.GetTemporary(target.descriptor);
+            ActivationMask.enableRandomWrite = true;
             
-            // run simulation on scaled texture
+            Graphics.Blit(preTargetPing, ActivationMask);
+            RenderTexture.ReleaseTemporary(preTargetPing);
+            preTargetPing = RenderTexture.GetTemporary(target.descriptor);
+            
+            temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
+            
             var phospheneRenderTexture = RenderTexture.GetTemporary(target.descriptor);
             phospheneRenderTexture.enableRandomWrite = true;
             temporalDynamicsCs.SetTexture(kernelActivations, TempDynPhospheneRenderTexture, phospheneRenderTexture);
             temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneRenderTexture, phospheneRenderTexture);
-            temporalDynamicsCs.SetTexture(kernelClean, TempDynPhospheneRenderTexture, phospheneRenderTexture);
+            
+            // calculate activations
             temporalDynamicsCs.Dispatch(kernelActivations, Mathf.CeilToInt(_nPhosphenes / 32), 1, 1);
             // render phosphene simulation
             temporalDynamicsCs.Dispatch(kernelSpread, threadX, threadY, 1);
+            
             Graphics.Blit(phospheneRenderTexture, preTargetPing);
             RenderTexture.ReleaseTemporary(phospheneRenderTexture);
+            RenderTexture.ReleaseTemporary(ActivationMask);
             // clean simulation texture
             temporalDynamicsCs.Dispatch(kernelClean, threadX, threadY, 1);
           }
@@ -189,6 +200,79 @@ namespace Xarphos.Scripts
           Graphics.Blit(preTargetPing, target, FocusDotMaterial);
 
           RenderTexture.ReleaseTemporary(preTargetPing);
+        }
+
+        private void InitialiseTextures(RenderTexture src)
+        {
+          if (setImageProcessingResolution || XRSettings.eyeTextureWidth == 0) return;
+          
+          setImageProcessingResolution = true;
+            
+          var w = XRSettings.eyeTextureWidth;
+          var h = XRSettings.eyeTextureHeight;
+          viveResolution = new Vector2Int(w, h);
+          ImageProcessingMaterial.SetInt(ImgProcResX, w);
+          ImageProcessingMaterial.SetInt(ImgProcResY, h);
+          Debug.Log($"Set Res to: {w}, {h}");
+
+          var compressionFactor = 1;
+          maskResolution = viveResolution / compressionFactor;
+
+          ActivationMask = new RenderTexture(src.descriptor)
+          {
+            width = maskResolution.x,
+            height = maskResolution.y,
+            enableRandomWrite = true
+          };
+          ActivationMask.Create();
+            
+          // Initialize the render textures & Set the shaders with the shared render textures
+          temporalDynamicsCs.SetInts(TempDynScreenResolution, viveResolution.x, viveResolution.y);  
+          temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
+          temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
+
+          PhospheneTexture = new RenderTexture(src.descriptor)
+          {
+            depth = 0,
+            enableRandomWrite = true
+          };
+          PhospheneTexture.Create();
+          temporalDynamicsCs.SetTexture(kernelActivations,TempDynPhospheneTexture, PhospheneTexture);
+          temporalDynamicsCs.SetTexture(kernelSpread,TempDynPhospheneTexture, PhospheneTexture);
+          temporalDynamicsCs.SetTexture(kernelClean,TempDynPhospheneTexture, PhospheneTexture);
+
+          // set up buffer to hold pixel activations
+          PhospheneMaterial.SetInt(PhosMatScreenResolutionX, viveResolution.x);
+
+          temporalDynamicsCs.GetKernelThreadGroupSizes(kernelSpread, out var xGroup, out var yGroup, out _);
+          threadX = Mathf.CeilToInt(viveResolution.x / xGroup);
+          threadY = Mathf.CeilToInt(viveResolution.y / yGroup);
+          
+          
+          // set eye position to centre of screen and calculate correct offsets
+          var P = targetCamera.ViewportToWorldPoint(
+            new Vector3(.5f, .5f, 10f), Camera.MonoOrStereoscopicEye.Mono); 
+          // projection from local space to clip space
+          var lMat = targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Left);
+          var rMat = targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Right);
+          var cMat = targetCamera.nonJitteredProjectionMatrix;
+          // projection from world space into local space
+          var world2cam = targetCamera.worldToCameraMatrix;
+          // 4th dimension necessary in graphics to get scale
+          var P4d = new Vector4(P.x, P.y, P.z, 1f); 
+          // point in world space * world2cam -> local space point
+          // local space point * projection matrix = clip space point
+          var lProjection = lMat * world2cam * P4d;
+          var rProjection = rMat * world2cam * P4d;
+          var cProjection = cMat * world2cam * P4d;
+          // scale and shift from clip space [-1,1] into view space [0,1]
+          var lViewSpace = (new Vector2(lProjection.x, lProjection.y) / lProjection.w) * .5f + .5f * Vector2.one;
+          var rViewSpace = (new Vector2(rProjection.x, rProjection.y) / rProjection.w) * .5f + .5f * Vector2.one;
+          var cViewSpace = (new Vector2(cProjection.x, cProjection.y) / cProjection.w) * .5f + .5f * Vector2.one;
+
+          SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
+          temporalDynamicsCs.SetVector("_LeftEyeCenter", lViewSpace);
+          temporalDynamicsCs.SetVector("_RightEyeCenter", rViewSpace);
         }
 
         private void OnDestroy(){
@@ -279,6 +363,9 @@ namespace Xarphos.Scripts
           FocusDotMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
           FocusDotMaterial.SetVector(ShPropEyePosRight, eyePosRight);
           
+          temporalDynamicsCs.SetVector(ShPropEyePosLeft, eyePosLeft);
+          temporalDynamicsCs.SetVector(ShPropEyePosRight, eyePosRight);
+          
           eyePosCorrectionMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
           eyePosCorrectionMaterial.SetVector(ShPropEyePosRight, eyePosRight);
           eyePosCorrectionMaterial.SetVector(ShPropEyePosCentre, eyePosCentre);
@@ -286,76 +373,6 @@ namespace Xarphos.Scripts
       
         protected void Update()
         {
-          if (!setImageProcessingResolution && XRSettings.eyeTextureWidth != 0)
-          {
-            setImageProcessingResolution = true;
-            
-            var w = XRSettings.eyeTextureWidth;
-            var h = XRSettings.eyeTextureHeight;
-            viveResolution = new Vector2Int(w, h);
-            ImageProcessingMaterial.SetInt(ImgProcResX, w);
-            ImageProcessingMaterial.SetInt(ImgProcResY, h);
-            Debug.Log($"Set Res to: {w}, {h}");
-
-            var compressionFactor = 4;
-            maskResolution = viveResolution / compressionFactor;
-            
-            ActivationMask = new RenderTexture(maskResolution.x, maskResolution.y, XRSettings.eyeTextureDesc.depthBufferBits);
-            ActivationMask.enableRandomWrite = true;
-            ActivationMask.Create();
-            
-            // Initialize the render textures & Set the shaders with the shared render textures
-            temporalDynamicsCs.SetInts(TempDynScreenResolution, viveResolution.x, viveResolution.y);  
-            temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
-            temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
-
-            PhospheneTexture = new RenderTexture(viveResolution.x, viveResolution.y, 0);
-            PhospheneTexture.enableRandomWrite = true;
-            PhospheneTexture.Create();
-            temporalDynamicsCs.SetTexture(kernelActivations,TempDynPhospheneTexture, PhospheneTexture);
-            temporalDynamicsCs.SetTexture(kernelSpread,TempDynPhospheneTexture, PhospheneTexture);
-            temporalDynamicsCs.SetTexture(kernelClean,TempDynPhospheneTexture, PhospheneTexture);
-
-            // set up buffer to hold pixel activations
-            PhospheneMaterial.SetInt(PhosMatScreenResolutionX, viveResolution.x);
-
-            temporalDynamicsCs.GetKernelThreadGroupSizes(kernelSpread, out var xGroup, out var yGroup, out _);
-            threadX = Mathf.CeilToInt(viveResolution.x / xGroup);
-            threadY = Mathf.CeilToInt(viveResolution.y / yGroup);
-            
-            // ToDo: 2D array [nPhosphenes x PixelInfluences]
-            // var influences = new List<Vector2Int>[_nPhosphenes];
-            //
-            // for (uint i = 0; i < _nPhosphenes; i += 1)
-            // {
-            //   var ph = _phosphenes[i];
-            //   Vector2Int pxlPos = Vector2Int.RoundToInt(Vector2.Scale(ph.position, viveResolution));
-            //   var r = Mathf.RoundToInt(ph.size * viveResolution.x);
-            //
-            //   for (int xOffset = 0; xOffset < r; xOffset += 1)
-            //   {
-            //     for (int yOffset = 0; yOffset < r; yOffset += 1)
-            //     {
-            //       if ((xOffset * xOffset + yOffset * yOffset) >= (r * r)) continue;
-            //       // position is inside of circle
-            //       var offsets = new[] { (xOffset, yOffset), (xOffset,-yOffset), (-xOffset, yOffset), (-xOffset,-yOffset) };
-            //       foreach (var offset in offsets)
-            //       {
-            //         int idx = 0;
-            //         var xPos = pxlPos.x + offset.Item1;
-            //         var yPos = pxlPos.y + offset.Item2;
-            //         if (xPos < 0 || xPos > w || yPos < 0 || yPos > h) continue;
-            //
-            //         influences[i] ??= new List<Vector2Int>();
-            //         influences[i].Add(new Vector2Int(xPos, yPos));
-            //       }
-            //     }
-            //   }
-            // }
-            // Debug.Log($"Max: {influences.Max(x => x.Count)}");
-
-          }
-          
           if (manualEyePos)
           {
             var eyePos = Vector2.zero;

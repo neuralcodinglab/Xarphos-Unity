@@ -11,8 +11,8 @@ namespace Xarphos.Scripts
   {
     public Vector2 position;
     public float size;
-    public float activation;
-    public float trace;
+    public Vector2 activation;
+    public Vector2 trace;
   }
 
   public class PhospheneConfig

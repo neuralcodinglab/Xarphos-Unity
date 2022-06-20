@@ -38,7 +38,6 @@
                 float2 uv: TEXCOORD0;
                 float4 vertex: SV_POSITION;
 
-                UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
 
@@ -46,7 +45,6 @@
             // Texture that determines where phosphenes should be activated
             UNITY_DECLARE_SCREENSPACE_TEXTURE(_MainTex);
             float4 _MainTex_ST;
-            float4 _MainTex_TexelSize;
 
             int _ResX;
             int _ResY;
@@ -57,10 +55,9 @@
                 VertexData outputs;
 
                 UNITY_SETUP_INSTANCE_ID(inputs);
-                UNITY_INITIALIZE_OUTPUT(VertexData, outputs);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(outputs);
                 
-                outputs.uv = TRANSFORM_TEX(inputs.uv, _MainTex);
+                outputs.uv = TRANSFORM_TEX(inputs.uv.xy, _MainTex);
                 outputs.vertex = UnityObjectToClipPos(inputs.vertex);
                 return outputs;
             }
@@ -71,6 +68,7 @@
                 // sample the texture
         		float2 offsets[9];
         		GetOffsets3x3(_ResX, _ResY, offsets);
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(inputs);
 
         		fixed3 textures[9];
         		for (int j = 0; j < 9; j++)
