@@ -8,13 +8,15 @@ struct Phosphene
 {
   float2 position;
   float size;
-  float2 activation;
-  float2 trace;
+  float2 activation; // activation pro phosphene is eye dependent as stimulation is different (texture offset)
+  float2 trace; // same reason as activation
 };
 
-uint2 resolution;
-uint2 screenResolution;
-int gazeAssistedSampling;
+uint2 resolution;       // resolution of input / stimulation texture
+uint2 screenResolution; // resolution of output texture
+
+int gazeAssisted;
+int gazeLocked;
 float2 _EyePositionLeft;
 float2 _EyePositionRight;
 float2 _LeftEyeCenter;
@@ -26,74 +28,96 @@ float trace_increase;   // The habituation strength: the factor by which stimula
 float trace_decay;      // The factor by which the stimulation memory trace decreases
 
 RWStructuredBuffer<Phosphene> phosphenes;
-RWStructuredBuffer<float> pixelLuminance;
 
-RWTexture2DArray<float4> ActivationMask;
-RWTexture2DArray<float4> PhospheneTexture;
-RWTexture2DArray<float4> PhospheneRender;
+RWTexture2DArray<float4> ActivationMask; // ToDo: Should probably be renamed to InputTex or StimulationTex
+RWTexture2DArray<float4> PhospheneTexture; // ToDo: Rename to ActivationTex
+RWTexture2DArray<float4> PhospheneRender; // ToDo: SimulationTex? RenderTex?
+
 
 [numthreads(32,1,2)]
 void CalculateActivations (uint3 id : SV_DispatchThreadID)
 {
-  Phosphene phosphene = phosphenes[id.x];
+  uint phosIdx = id.x;
+  uint eyeIdx = id.z;
+
+  //***************************************************************************
+  // Get Position and Stimulation
+  //***************************************************************************  
+  // get correct eye position (0 is left, 1 is right)
+  float2 eyePos = lerp(_EyePositionLeft, _EyePositionRight, eyeIdx);
+  float2 eyeCenter = lerp(_LeftEyeCenter, _RightEyeCenter, eyeIdx);
 
   // if gaze assist is set to 1 (on), adjust sample position to eye position
-  float2 eyePos = lerp(_EyePositionLeft, _EyePositionRight, id.z);
-  float2 eyeCenter = lerp(_LeftEyeCenter, _RightEyeCenter, id.z);
   // calculate corrected phosphene position
+  float2 samplePosition = phosphenes[phosIdx].position - 0.5
+      + (gazeAssisted * eyePos)           // With gaze assisted sampling, center around current eye position
+      + ((1 - gazeAssisted) * eyeCenter); // Without center around eye center calculated at the start of the programme
 
-  // ToDo: makes left eye blank? right eye renders normally tho
-  float2 samplePosition = phosphene.position - 0.5
-      + (gazeAssistedSampling * eyePos)           // With gaze assisted sampling, center around current eye position
-      + ((1 - gazeAssistedSampling) * eyeCenter); // Without center around eye center calculated at the start of the programme
-
-  // Read stimulation value from activation mask
+  // Read stimulation value from input texture
   uint2 index = uint2((uint)(samplePosition.x * resolution.x), (uint)(samplePosition.y * resolution.y));
-  float stim = ActivationMask[uint3(index, id.z)].x;
-  
-  // Compute phosphene activation as function of previous activation and stimulation
-  float actv = phosphene.activation[id.z];
-  phosphenes[id.x].activation[id.z] = max(0, intensity_decay*actv + input_effect * (stim - phosphene.trace[id.z]));
-  phosphenes[id.x].trace[id.z] = trace_decay*phosphene.trace[id.z] + trace_increase * stim;
+  float stim = ActivationMask[uint3(index, eyeIdx)].x;
 
-  // ToDo: adjust for eye offset; .5,.5 on 2D screen needs to be transformed to eye space?
-  uint2 idx = uint2((uint)(samplePosition.x * screenResolution.x), (uint)(samplePosition.y * screenResolution.y));
-  PhospheneTexture[uint3(idx, id.z)] =  float4(actv, actv, actv, phosphene.size);
+  //***************************************************************************
+  // Update activation and trace
+  //***************************************************************************
+  // Compute phosphene activation as function of previous activation and stimulation
+  float actv = phosphenes[phosIdx].activation[eyeIdx];
+  phosphenes[phosIdx].activation[eyeIdx] = max(0, intensity_decay*actv + input_effect * (stim - phosphenes[phosIdx].trace[eyeIdx]));
+  phosphenes[phosIdx].trace[eyeIdx] = trace_decay*phosphenes[phosIdx].trace[eyeIdx] + trace_increase * stim;
+
+  //***************************************************************************
+  // Write to activation texture
+  //***************************************************************************
+  // calculate output position, either around center (in gaze ignored) or around foveal position
+  float2 outputPosition = phosphenes[phosIdx].position - 0.5
+      + (gazeLocked * eyePos)           // With gaze locked, center around current eye position
+      + ((1 - gazeLocked) * eyeCenter); // Without, center around eye center calculated at the start of the programme
+  
+  // calculate position on activation texture (can be different if input texture is a different size)
+  uint2 idx = uint2((uint)(outputPosition.x * screenResolution.x), (uint)(outputPosition.y * screenResolution.y));
+  PhospheneTexture[uint3(idx, eyeIdx)] =  float4(actv, actv, actv, phosphenes[phosIdx].size);
 }
 
+/**
+ * \brief samples from a normal distribution given the distance |mean - pos| and deviation (phosphene size)
+ * \param d distance from center
+ * \param sigma standard deviation
+ * \return sample from normal distribution
+ */
 float Gaussian(float d, float sigma)
 {
-  float c = 1.0 / (sigma * 2.50662);
+  float c = 1.0 / (sigma * 2.50662); // 2.50662 is approximation of sqrt(2*pi)
   return c * exp( -(d * d) / (2 * sigma * sigma) );
 }
 
-#define xThreads 32
+// macros for shared values
+#define xThreads 16
 #define yThreads 32
 
-[numthreads(xThreads,yThreads,1)]
+[numthreads(xThreads,yThreads,2)]
 void SpreadActivations(uint3 id : SV_DispatchThreadID)
 {
-  // ToDo: Take Eye position into account
-  // ToDo: figure out why radius is bonkers (scale wrong?)
-
-  // get activation data from texture storage
-  float4 pixelL = PhospheneTexture[uint3(id.xy, 0)];
-  float4 pixelR = PhospheneTexture[uint3(id.xy, 1)];
-  const float size = pixelR.w;
-  const float actvL = pixelL.x;
-  const float actvR = pixelR.x;
+  // get activation data from texture
+  float4 pixel = PhospheneTexture[uint3(id.xy, id.z)];
+  const float size = pixel.w;
+  const float actv = pixel.x;
   // if it's a pixel without activation or radius, we are done
-  if (size < 0.001) { return; }
+  if (size < 0.001 || actv < 0.001) { return; }
 
-  PhospheneRender[uint3(id.xy, 0)] = float4(actvL, actvL, actvL, 1);
-  PhospheneRender[uint3(id.xy, 1)] = float4(actvR, actvR, actvR, 1);
-  
-  const float scale = Gaussian(0, size);
+  // write activation into output pixel
+  PhospheneRender[uint3(id.xy, id.z)] = float4(actv, actv, actv, 1);
+
+  // scale to normalise distribution on so that 0 distance has maximum activation (1 * actv)
+  const float scale = Gaussian(0, size*2); // * 2 to get back from radius to diameter
+  // ToDo: figure out why radius is bonkers (scale wrong?)
   const float size_scale = 10;
 
+  // from size of phosphene calculate how many pixels the radius is
   const uint max_r = size * screenResolution.x / size_scale;
+  // to save sqrt for radius comparison save r^2
   const uint maxr2 = max_r * max_r;
-  
+
+  // iterate the entire area covered by the radius
   for (uint xOff=0; xOff < max_r; xOff++)
   {
     for (uint yOff=0; yOff < max_r; yOff++)
@@ -101,35 +125,28 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
       // don't overwrite centre
       if (xOff + yOff == 0)
         continue;
-      // if we are past radius, move to next x-location
+      // if we are past radius, move to next x-location, as we won't be inside the circle again if we increase the radius
       if ((yOff*yOff + xOff*xOff) >= maxr2)
         break;
 
-      // calculate spread according to gaussian
+      // calculate spread according to gaussian and scale
       float dist = sqrt( (xOff*xOff) / (screenResolution.x * screenResolution.x)
         + (yOff*yOff) / (screenResolution.y * screenResolution.y) );
+      float spread = actv * Gaussian(dist, size*2) / scale;
 
-      // spread left eye
-      float spread = actvL * Gaussian(dist, size) / scale;
-      PhospheneRender[uint3(id.x + xOff, id.y + yOff, 0)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y + yOff, 0)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x + xOff, id.y - yOff, 0)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y - yOff, 0)] = float4(spread, spread, 0, 0);
-
-      // spread right eye
-      spread = actvR * Gaussian(dist, size) / scale;
-      PhospheneRender[uint3(id.x + xOff, id.y + yOff, 1)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y + yOff, 1)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x + xOff, id.y - yOff, 1)] = float4(spread, spread, 0, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y - yOff, 1)] = float4(spread, spread, 0, 0);
+      // spread the activation to pixels (since we only iterate one radius, we are writing to all 4 quadrants)
+      PhospheneRender[uint3(id.x + xOff, id.y + yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x - xOff, id.y + yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x + xOff, id.y - yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x - xOff, id.y - yOff, id.z)] += float4(spread, spread, spread, 0);
     }
   }
 }
 
 
-[numthreads(xThreads,yThreads,1)]
+[numthreads(xThreads,yThreads,2)]
 void ClearActivations(uint3 id : SV_DispatchThreadID)
 {
-  PhospheneTexture[uint3(id.xy, 0)] = float4(0,0,0,0);
-  PhospheneTexture[uint3(id.xy, 1)] = float4(0,0,0,0);
+  // reset the activation texture
+  PhospheneTexture[uint3(id.xy, id.z)] = float4(0,0,0,0);
 }

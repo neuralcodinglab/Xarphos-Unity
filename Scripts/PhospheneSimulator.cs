@@ -12,43 +12,9 @@ namespace Xarphos.Scripts
     public class PhospheneSimulator : MonoBehaviour
     {
         public Camera targetCamera;
-        public bool manualEyePos;
-
-        // Image processing settings
-        [SerializeField]
-        private float _phospheneFiltering;
-        private bool _edgeDetection;
-
-        // EyeTracking
-        protected int GazeLocking; // used as boolean (sent to shader)
-        protected bool CamLocking;
-        protected bool RenderFocusPoint = true;
-
-        // Image processing settings
-        [SerializeField] protected EyeTracking.EyeTrackingConditions eyeTrackingCondition;
-        [SerializeField] protected SurfaceReplacement.ReplacementModes surfaceReplacementMode;
-        private readonly int _nSurfaceModes = Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
-        private readonly int _nEyeTrackingModes = Enum.GetValues(typeof(EyeTracking.EyeTrackingConditions)).Length;
-
-        // Render textures
-        protected RenderTexture ActivationMask;
-
-        // For reading phosphene configuration from JSON
-        [SerializeField] private string phospheneConfigFile;
-        private Phosphene[] _phosphenes;
-        private int _nPhosphenes;
-        private ComputeBuffer _phospheneBuffer;
-
-        // Shaders and materials
-        protected Material ImageProcessingMaterial;
-        protected Material PhospheneMaterial;
-        protected Material FocusDotMaterial;
-        protected Material eyePosCorrectionMaterial;
-        [SerializeField] protected Shader phospheneShader;
-        [SerializeField] protected Shader imageProcessingShader;
-        [SerializeField] protected ComputeShader temporalDynamicsCs;
-
-
+        public bool setManualEyePos;
+        public Vector2 ManualEyePos = new (.5f, .5f);
+        
         // stimulation parameters
         [SerializeField]
         private float inputEffect = 0.7f;// The factor by which stimulation accumulates to phosphene activation
@@ -58,17 +24,39 @@ namespace Xarphos.Scripts
         private float traceIncrease = 0.1f; // The habituation strength: the factor by which stimulation leads to buildup of memory trace
         [SerializeField]
         private float traceDecay = 0.9f; // The factor by which the stimulation memory trace decreases
+
+        // Image processing settings
+        private float _phospheneFiltering;
+        private bool _edgeDetection;
+
+        private Vector2Int viveResolution, maskResolution;
+        protected RenderTexture ActivationMask, PhospheneTexture;
+        [SerializeField] protected SurfaceReplacement.ReplacementModes surfaceReplacementMode;
+        private readonly int _nSurfaceModes = Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
+
+        // For reading phosphene configuration from JSON
+        [SerializeField] private string phospheneConfigFile;
+        private Phosphene[] _phosphenes;
+        private int _nPhosphenes;
+        private ComputeBuffer _phospheneBuffer;
+
+        // Shaders and materials
+        protected Material ImageProcessingMaterial;
+        protected Material FocusDotMaterial;
+        [SerializeField] protected Shader imageProcessingShader;
+        [SerializeField] protected ComputeShader temporalDynamicsCs;
         
+        // Eye tracking
+        [SerializeField] protected EyeTracking.EyeTrackingConditions eyeTrackingCondition;
+        private readonly int _nEyeTrackingModes = Enum.GetValues(typeof(EyeTracking.EyeTrackingConditions)).Length;
         private Vector2 eyePosLeft, eyePosRight, eyePosCentre;
         
         // simulation auxillaries
-        protected RenderTexture PhospheneTexture;
-        private Vector2Int viveResolution, maskResolution;
         private int kernelActivations, kernelSpread, kernelClean;
         private int threadX, threadY;
-
-        private bool setImageProcessingResolution = false;
+        private bool headsetInitialised = false;
         
+        // ToDo: Clean Up and unify
         #region Shader Properties Name-To-Int
         private static readonly int PhosMatMask = Shader.PropertyToID("_ActivationMask");
         private static readonly int PhosMatPhosphenes = Shader.PropertyToID("phosphenes");
@@ -89,7 +77,8 @@ namespace Xarphos.Scripts
         private static readonly int TempDynPhosphenes = Shader.PropertyToID("phosphenes");
         private static readonly int TempDynPhospheneTexture = Shader.PropertyToID("PhospheneTexture");
         private static readonly int TempDynPhospheneRenderTexture = Shader.PropertyToID("PhospheneRender");
-        private static readonly int TempDynGazeAssistedSampling = Shader.PropertyToID("gazeAssistedSampling");
+        private static readonly int TempDynGazeAssisted = Shader.PropertyToID("gazeAssisted");
+        private static readonly int TempDynGazeLocked = Shader.PropertyToID("gazeLocked");
         private static readonly int TempDynEyePos = Shader.PropertyToID("eyePos");
         
         private static readonly int ImgProcMode = Shader.PropertyToID("_Mode");
@@ -106,81 +95,77 @@ namespace Xarphos.Scripts
 
         protected void Awake()
         {
-          // Vive Pro Resolution
-          // resolution = new Vector2Int(1440, 1600);
+          targetCamera ??= GetComponent<Camera>();
+
+          // Initialize the array of phosphenes
+          _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
+          _nPhosphenes = _phosphenes.Length;
+          _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*7);
+          _phospheneBuffer.SetData(_phosphenes);
+
+          // Initialize materials with shaders
+          ImageProcessingMaterial = new Material(imageProcessingShader);
           
-            targetCamera ??= GetComponent<Camera>();
+          // Set the compute shader with the temporal dynamics variables
+          temporalDynamicsCs.SetFloat(TempDynInputEffect, inputEffect);
+          temporalDynamicsCs.SetFloat(TempDynIntensityDecay, intensityDecay);
+          temporalDynamicsCs.SetFloat(TempDynTraceIncrease, traceIncrease);
+          temporalDynamicsCs.SetFloat(TempDynTraceDecay, traceDecay);
 
-            // Initialize the array of phosphenes
-            _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
-            _nPhosphenes = _phosphenes.Length;
-            _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*7);
-            _phospheneBuffer.SetData(_phosphenes);
+          temporalDynamicsCs.SetBuffer(0, TempDynPhosphenes, _phospheneBuffer);
+          // Set the default EyeTrackingCondition (Ignore Gaze)
+          temporalDynamicsCs.SetInt(TempDynGazeLocked, 0);
+          temporalDynamicsCs.SetInt(TempDynGazeAssisted, 0);
 
-            // Initialize materials with shaders
-            PhospheneMaterial = new Material(phospheneShader);
-            ImageProcessingMaterial = new Material(imageProcessingShader);// TODO
-            
-            // Set the compute shader with the temporal dynamics variables
-            temporalDynamicsCs.SetFloat(TempDynInputEffect, inputEffect);
-            temporalDynamicsCs.SetFloat(TempDynIntensityDecay, intensityDecay);
-            temporalDynamicsCs.SetFloat(TempDynTraceIncrease, traceIncrease);
-            temporalDynamicsCs.SetFloat(TempDynTraceDecay, traceDecay);
-            
-            // Set the shader properties with the shared phosphene buffer
-            PhospheneMaterial.SetBuffer(PhosMatPhosphenes, _phospheneBuffer);
-            PhospheneMaterial.SetInt(PhosMatNPhosphenes, _nPhosphenes);
-            PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
-
-            temporalDynamicsCs.SetBuffer(0, TempDynPhosphenes, _phospheneBuffer);
-            // Set the default EyeTrackingCondition (Ignore Gaze)
-            PhospheneMaterial.SetInt(PhosMatGazeLocked, 0);
-            temporalDynamicsCs.SetInt(TempDynGazeAssistedSampling, 0);
-
-            kernelActivations = temporalDynamicsCs.FindKernel("CalculateActivations");
-            kernelSpread = temporalDynamicsCs.FindKernel("SpreadActivations");
-            kernelClean = temporalDynamicsCs.FindKernel("ClearActivations");
-            
-            FocusDotMaterial = new Material(Shader.Find("Custom/FocusDot"));
-            eyePosCorrectionMaterial = new Material(Shader.Find("Custom/EyePositionCorrection"));
-            
-            FocusDotMaterial.SetInt("_RenderPoint", 1);
+          // get kernel references
+          kernelActivations = temporalDynamicsCs.FindKernel("CalculateActivations");
+          kernelSpread = temporalDynamicsCs.FindKernel("SpreadActivations");
+          kernelClean = temporalDynamicsCs.FindKernel("ClearActivations");
+          
+          // set up shader for focusdot
+          FocusDotMaterial = new Material(Shader.Find("Custom/FocusDot"));
+          FocusDotMaterial.SetInt("_RenderPoint", 1);
         }
 
         private void Start()
         {
+          // replace surfaces with in editor selected variant
           SurfaceReplacement.ActivateReplacementShader(targetCamera, surfaceReplacementMode);
         }
 
         private void OnRenderImage(RenderTexture src, RenderTexture target)
         {
-          InitialiseTextures(src);
-          if (target == null || !setImageProcessingResolution) return;
+          InitialiseTextures(src); // set up textures, resolutions and parameters
+          // if headset is not yet available: skip
+          if (target == null || !headsetInitialised) return;
 
           // in between texture to put processed image on before blitting from this to target
           var preTargetPing = RenderTexture.GetTemporary(target.descriptor);
+          
           // if phosphene simulator is off, only need to run image through image processing for edge detection
-
           if (_edgeDetection)
             Graphics.Blit(src, preTargetPing, ImageProcessingMaterial);
           // if edge detection is off, just blit without any processing
           else
             Graphics.Blit(src, preTargetPing);
 
+          // if phosphene simulation is turned on
           if ((int)_phospheneFiltering != 0)
           {
-            // blit to activation mask for compression
+            // create temporary input texture for shader
             ActivationMask = RenderTexture.GetTemporary(target.descriptor);
             ActivationMask.enableRandomWrite = true;
-            
+            // blit to activation mask for shader to read
             Graphics.Blit(preTargetPing, ActivationMask);
+            // release ping tex to avoid fragments
             RenderTexture.ReleaseTemporary(preTargetPing);
-            preTargetPing = RenderTexture.GetTemporary(target.descriptor);
-            
+            // parse texture to shader
             temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
             
+            // get temporary output texture for simulation
             var phospheneRenderTexture = RenderTexture.GetTemporary(target.descriptor);
             phospheneRenderTexture.enableRandomWrite = true;
+            // and pass ref to shader
             temporalDynamicsCs.SetTexture(kernelActivations, TempDynPhospheneRenderTexture, phospheneRenderTexture);
             temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneRenderTexture, phospheneRenderTexture);
             
@@ -189,7 +174,10 @@ namespace Xarphos.Scripts
             // render phosphene simulation
             temporalDynamicsCs.Dispatch(kernelSpread, threadX, threadY, 1);
             
+            // reinit & copy simulation to pre-out
+            preTargetPing = RenderTexture.GetTemporary(target.descriptor);
             Graphics.Blit(phospheneRenderTexture, preTargetPing);
+            // release temporaries. don't want memory leaks
             RenderTexture.ReleaseTemporary(phospheneRenderTexture);
             RenderTexture.ReleaseTemporary(ActivationMask);
             // clean simulation texture
@@ -198,16 +186,20 @@ namespace Xarphos.Scripts
 
           // lastly render the focus dot on top
           Graphics.Blit(preTargetPing, target, FocusDotMaterial);
-
           RenderTexture.ReleaseTemporary(preTargetPing);
         }
 
+        /// <summary>
+        /// Sets up the parameters relating to image processing and simulation, like resolution
+        /// </summary>
+        /// <param name="src">a render texture that is VR ready to get parameters from</param>
         private void InitialiseTextures(RenderTexture src)
         {
-          if (setImageProcessingResolution || XRSettings.eyeTextureWidth == 0) return;
+          if (headsetInitialised || XRSettings.eyeTextureWidth == 0) return;
           
-          setImageProcessingResolution = true;
+          headsetInitialised = true;
             
+          // set up resolution
           var w = XRSettings.eyeTextureWidth;
           var h = XRSettings.eyeTextureHeight;
           viveResolution = new Vector2Int(w, h);
@@ -215,9 +207,9 @@ namespace Xarphos.Scripts
           ImageProcessingMaterial.SetInt(ImgProcResY, h);
           Debug.Log($"Set Res to: {w}, {h}");
 
+          // set up input texture for simulation
           var compressionFactor = 1;
           maskResolution = viveResolution / compressionFactor;
-
           ActivationMask = new RenderTexture(src.descriptor)
           {
             width = maskResolution.x,
@@ -231,6 +223,7 @@ namespace Xarphos.Scripts
           temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
           temporalDynamicsCs.SetTexture(kernelActivations,TempDynMask, ActivationMask);
 
+          // set up the activation storage texture
           PhospheneTexture = new RenderTexture(src.descriptor)
           {
             depth = 0,
@@ -240,18 +233,30 @@ namespace Xarphos.Scripts
           temporalDynamicsCs.SetTexture(kernelActivations,TempDynPhospheneTexture, PhospheneTexture);
           temporalDynamicsCs.SetTexture(kernelSpread,TempDynPhospheneTexture, PhospheneTexture);
           temporalDynamicsCs.SetTexture(kernelClean,TempDynPhospheneTexture, PhospheneTexture);
-
-          // set up buffer to hold pixel activations
-          PhospheneMaterial.SetInt(PhosMatScreenResolutionX, viveResolution.x);
-
+          
+          // calculate the thread count necessary to cover the entire texture
           temporalDynamicsCs.GetKernelThreadGroupSizes(kernelSpread, out var xGroup, out var yGroup, out _);
           threadX = Mathf.CeilToInt(viveResolution.x / xGroup);
           threadY = Mathf.CeilToInt(viveResolution.y / yGroup);
           
-          
+          // calculate the center position for each eye corrected for visual transform
+          var (lViewSpace, rViewSpace, cViewSpace) = EyePosFromScreenPoint(0.5f, 0.5f);
+          SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
+          temporalDynamicsCs.SetVector("_LeftEyeCenter", lViewSpace);
+          temporalDynamicsCs.SetVector("_RightEyeCenter", rViewSpace);
+        }
+
+        /// <summary>
+        /// calculate the screen position for each eye from a 2d point on the "center" view
+        /// </summary>
+        /// <param name="x">x position on screen in 0..1, left is 0</param>
+        /// <param name="y">y position on screen in 0..1, bottom is 0</param>
+        /// <returns>tuple of left, right and center screen position according to input. center should be roughly equal to input</returns>
+        private (Vector2, Vector2, Vector2) EyePosFromScreenPoint(float x, float y)
+        {
           // set eye position to centre of screen and calculate correct offsets
           var P = targetCamera.ViewportToWorldPoint(
-            new Vector3(.5f, .5f, 10f), Camera.MonoOrStereoscopicEye.Mono); 
+            new Vector3(x, y, 10f)); 
           // projection from local space to clip space
           var lMat = targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Left);
           var rMat = targetCamera.GetStereoNonJitteredProjectionMatrix(Camera.StereoscopicEye.Right);
@@ -269,10 +274,8 @@ namespace Xarphos.Scripts
           var lViewSpace = (new Vector2(lProjection.x, lProjection.y) / lProjection.w) * .5f + .5f * Vector2.one;
           var rViewSpace = (new Vector2(rProjection.x, rProjection.y) / rProjection.w) * .5f + .5f * Vector2.one;
           var cViewSpace = (new Vector2(cProjection.x, cProjection.y) / cProjection.w) * .5f + .5f * Vector2.one;
-
-          SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
-          temporalDynamicsCs.SetVector("_LeftEyeCenter", lViewSpace);
-          temporalDynamicsCs.SetVector("_RightEyeCenter", rViewSpace);
+          
+          return (lViewSpace, rViewSpace, cViewSpace);
         }
 
         private void OnDestroy(){
@@ -280,16 +283,16 @@ namespace Xarphos.Scripts
         }
 
         #region Input Handling
+        // cycle surface replacement
         public void NextSurfaceReplacementMode(InputAction.CallbackContext ctx) => NextSurfaceReplacementMode();
-        
         private void NextSurfaceReplacementMode(){
           surfaceReplacementMode = (SurfaceReplacement.ReplacementModes)((int)(surfaceReplacementMode + 1) % _nSurfaceModes);
           // Replace surfaces with the surface replacement shader
           SurfaceReplacement.ActivateReplacementShader(targetCamera, surfaceReplacementMode);
         }
 
+        // cycle eye tracking conditions
         public void NextEyeTrackingCondition(InputAction.CallbackContext ctx) => NextEyeTrackingCondition();
-
         private void NextEyeTrackingCondition()
         {
           eyeTrackingCondition = (EyeTracking.EyeTrackingConditions)((int)(eyeTrackingCondition + 1) % _nEyeTrackingModes);
@@ -298,93 +301,67 @@ namespace Xarphos.Scripts
           {
             // reset and don't use gaze info
             case EyeTracking.EyeTrackingConditions.GazeIgnored:
-              PhospheneMaterial.SetInt(PhosMatGazeLocked, 0);
-              PhospheneMaterial.SetInt(PhosMatGazeAssisted, 0);
-              temporalDynamicsCs.SetInt(TempDynGazeAssistedSampling, 0);
+              temporalDynamicsCs.SetInt(TempDynGazeAssisted, 0);
+              temporalDynamicsCs.SetInt(TempDynGazeLocked, 0);
               break;
             // add lock to gaze
             case EyeTracking.EyeTrackingConditions.SimulationFixedToGaze:
-              PhospheneMaterial.SetInt(PhosMatGazeLocked, 1);
-              PhospheneMaterial.SetInt(PhosMatGazeAssisted, 0);
-              temporalDynamicsCs.SetInt(TempDynGazeAssistedSampling, 0);
+              temporalDynamicsCs.SetInt(TempDynGazeAssisted, 0);
+              temporalDynamicsCs.SetInt(TempDynGazeLocked, 1);
               break;
             // add gaze assisted sampling on top
             case EyeTracking.EyeTrackingConditions.GazeAssistedSampling:
-              PhospheneMaterial.SetInt(PhosMatGazeLocked, 1);
-              PhospheneMaterial.SetInt(PhosMatGazeAssisted, 1);
-              temporalDynamicsCs.SetInt(TempDynGazeAssistedSampling, 1);
+              temporalDynamicsCs.SetInt(TempDynGazeAssisted, 1);
+              temporalDynamicsCs.SetInt(TempDynGazeLocked, 1);
               break;
           }
         }
-
-        public void TogglePhospheneSim(InputAction.CallbackContext ctx) => TogglePhospheneSim();
-
-        public void TogglePhospheneSim()
-        {
-          _phospheneFiltering = 1-_phospheneFiltering;
-          PhospheneMaterial.SetFloat(PhosMatFilter, _phospheneFiltering);
-        }
-
+        
         public void ToggleEdgeDetection(InputAction.CallbackContext ctx) => ToggleEdgeDetection();
-
         private void ToggleEdgeDetection()
         {
           _edgeDetection = !_edgeDetection;
         }
         
-        public void ToggleCamLocking(InputAction.CallbackContext ctx) => ToggleCamLocking();
-
-        public void ToggleCamLocking()
+        public void TogglePhospheneSim(InputAction.CallbackContext ctx) => TogglePhospheneSim();
+        public void TogglePhospheneSim()
         {
-          CamLocking = !CamLocking;
+          _phospheneFiltering = 1-_phospheneFiltering;
         }
-        
-        public void ToggleGazeLocking(InputAction.CallbackContext ctx) => ToggleGazeLocking();
+        #endregion
 
-        public void ToggleGazeLocking()
-        {
-          GazeLocking = 1-GazeLocking;
-          PhospheneMaterial.SetInt(PhosMatGazeLocked, GazeLocking);
-        }
-      #endregion
-
+        /// <summary>
+        /// Update class variables and pass new positions to shaders
+        /// </summary>
+        /// <param name="leftViewport">left eye screen position in 0..1</param>
+        /// <param name="rightViewport">right eye screen position in 0..1</param>
+        /// <param name="centreViewport">centre screen position in 0..1</param>
         public void SetEyePosition(Vector2 leftViewport, Vector2 rightViewport, Vector2 centreViewport)
         {
           eyePosLeft = leftViewport;
           eyePosRight = rightViewport;
           eyePosCentre = centreViewport;
-          
-          PhospheneMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
-          PhospheneMaterial.SetVector(ShPropEyePosRight, eyePosRight);
-          
-          ImageProcessingMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
-          ImageProcessingMaterial.SetVector(ShPropEyePosRight, eyePosRight);
-          
+
           FocusDotMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
           FocusDotMaterial.SetVector(ShPropEyePosRight, eyePosRight);
           
           temporalDynamicsCs.SetVector(ShPropEyePosLeft, eyePosLeft);
           temporalDynamicsCs.SetVector(ShPropEyePosRight, eyePosRight);
-          
-          eyePosCorrectionMaterial.SetVector(ShPropEyePosLeft, eyePosLeft);
-          eyePosCorrectionMaterial.SetVector(ShPropEyePosRight, eyePosRight);
-          eyePosCorrectionMaterial.SetVector(ShPropEyePosCentre, eyePosCentre);
         }
       
         protected void Update()
         {
-          if (manualEyePos)
+          if (setManualEyePos)
           {
-            var eyePos = Vector2.zero;
-            if (Keyboard.current[Key.J].isPressed) eyePos.y = .2f;
-            else if (Keyboard.current[Key.U].isPressed) eyePos.y = .8f;
-            else eyePos.y = .5f;
+            if (Keyboard.current[Key.J].isPressed) ManualEyePos.y -= .05f * Time.deltaTime;
+            else if (Keyboard.current[Key.U].isPressed) ManualEyePos.y += .05f * Time.deltaTime;
 
-            if (Keyboard.current[Key.K].isPressed) eyePos.x = .8f;
-            else if (Keyboard.current[Key.H].isPressed) eyePos.x = .2f;
-            else eyePos.x = .5f;
+            if (Keyboard.current[Key.K].isPressed) ManualEyePos.x += .05f * Time.deltaTime;
+            else if (Keyboard.current[Key.H].isPressed) ManualEyePos.x -= .05f * Time.deltaTime;
             
-            SetEyePosition(eyePos, eyePos, eyePos);
+            var (lViewSpace, rViewSpace, cViewSpace) = EyePosFromScreenPoint(ManualEyePos.x, ManualEyePos.y);
+            
+            SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
           }
 
           if (Keyboard.current[Key.C].isPressed)

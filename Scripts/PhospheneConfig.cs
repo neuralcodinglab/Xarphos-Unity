@@ -11,8 +11,8 @@ namespace Xarphos.Scripts
   {
     public Vector2 position;
     public float size;
-    public Vector2 activation;
-    public Vector2 trace;
+    public Vector2 activation; // activation pro phosphene is eye dependent as stimulation is different (texture offset)
+    public Vector2 trace; // same reason as activation
   }
 
   public class PhospheneConfig
