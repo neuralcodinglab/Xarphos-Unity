@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.Experimental.Rendering;
@@ -35,8 +36,9 @@ namespace Xarphos.Scripts
         private readonly int _nSurfaceModes = Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
 
         // For reading phosphene configuration from JSON
+        public bool initialiseFromFile;
         [SerializeField] private string phospheneConfigFile;
-        private Phosphene[] _phosphenes;
+        private PhospheneConfig _phosphenes;
         private int _nPhosphenes;
         private ComputeBuffer _phospheneBuffer;
 
@@ -98,10 +100,19 @@ namespace Xarphos.Scripts
           targetCamera ??= GetComponent<Camera>();
 
           // Initialize the array of phosphenes
-          _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
-          _nPhosphenes = _phosphenes.Length;
+          if (initialiseFromFile && phospheneConfigFile != null)
+          {
+            try
+            {
+              _phosphenes = PhospheneConfig.InitPhosphenesFromJSON(phospheneConfigFile);
+            } catch (FileNotFoundException){ }
+          }
+          // if boolean is false, the file path is not given or the initialising from file failed, initialise probabilistic
+          _phosphenes ??= PhospheneConfig.InitPhosphenesProbabilistically(1000, .3f, PhospheneConfig.Monopole);
+          
+          _nPhosphenes = _phosphenes.phosphenes.Length;
           _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*7);
-          _phospheneBuffer.SetData(_phosphenes);
+          _phospheneBuffer.SetData(_phosphenes.phosphenes);
 
           // Initialize materials with shaders
           ImageProcessingMaterial = new Material(imageProcessingShader);
