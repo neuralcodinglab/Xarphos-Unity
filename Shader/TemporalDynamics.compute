@@ -29,7 +29,7 @@ float trace_decay;      // The factor by which the stimulation memory trace decr
 
 RWStructuredBuffer<Phosphene> phosphenes;
 
-RWTexture2DArray<float4> ActivationMask; // ToDo: Should probably be renamed to InputTex or StimulationTex
+Texture2DArray<float4> ActivationMask; // ToDo: Should probably be renamed to InputTex or StimulationTex
 RWTexture2DArray<float4> PhospheneTexture; // ToDo: Rename to ActivationTex
 RWTexture2DArray<float4> PhospheneRender; // ToDo: SimulationTex? RenderTex?
 
@@ -107,13 +107,13 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
   // write activation into output pixel
   PhospheneRender[uint3(id.xy, id.z)] = float4(actv, actv, actv, 1);
 
+  // sigma is diameter, size is radius
+  const float sigma = size * 2.0;
   // scale to normalise distribution on so that 0 distance has maximum activation (1 * actv)
-  const float scale = Gaussian(0, size*2); // * 2 to get back from radius to diameter
-  // ToDo: figure out why radius is bonkers (scale wrong?)
-  const float size_scale = 10;
+  const float scale = Gaussian(0, sigma);
 
-  // from size of phosphene calculate how many pixels the radius is
-  const uint max_r = size * screenResolution.x / size_scale;
+  // after 3 deviations, tail is near unobservable, so spread up to 3 deviations
+  const uint max_r = size * 4.0 * screenResolution.x; // 2 deviations for performance
   // to save sqrt for radius comparison save r^2
   const uint maxr2 = max_r * max_r;
 
@@ -132,7 +132,7 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
       // calculate spread according to gaussian and scale
       float dist = sqrt( (xOff*xOff) / (screenResolution.x * screenResolution.x)
         + (yOff*yOff) / (screenResolution.y * screenResolution.y) );
-      float spread = actv * Gaussian(dist, size*2) / scale;
+      float spread = actv * Gaussian(dist, sigma) / scale;
 
       // spread the activation to pixels (since we only iterate one radius, we are writing to all 4 quadrants)
       PhospheneRender[uint3(id.x + xOff, id.y + yOff, id.z)] += float4(spread, spread, spread, 0);

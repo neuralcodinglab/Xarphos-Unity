@@ -92,8 +92,9 @@ namespace Xarphos.Scripts
       /// <param name="nPhosphenes">The number of phosphenes to generate across the entire FOV</param>
       /// <param name="maxEccentricity">Max radius of phosphenes in fraction of total fov [0,1)</param>
       /// <param name="parameters">Which cortex model to use for magnification factor along with the parameters</param>
-      /// <returns></returns>
-      public static PhospheneConfig InitPhosphenesProbabilistically(int nPhosphenes, float maxEccentricity, CortexModelParameters parameters)
+      /// <param name="createPictureOfLayout">If true, creates a png picture of phosphenes at maxixum stimulation</param>
+      /// <returns>The config object holding the initialised phosphenes and underlying data</returns>
+      public static PhospheneConfig InitPhosphenesProbabilistically(int nPhosphenes, float maxEccentricity, CortexModelParameters parameters, bool createPictureOfLayout=false)
       {
         var config = new PhospheneConfig
         {
@@ -148,7 +149,7 @@ namespace Xarphos.Scripts
 
           var ecc = validEcc[idx];
           config.eccentricities[i] = (float)ecc;
-          var theta = Math.PI * 2 * randomVals[idx + nPhosphenes];
+          var theta = Math.PI * 2 * randomVals[i + nPhosphenes];
           
           // calculate cartesian coordinates of phosphene in [0,1] ; eccentricities have fovea at 0,0
           // so move coordinates by 60 to and scale by 120 to get relative position
@@ -172,8 +173,51 @@ namespace Xarphos.Scripts
 
           config.phosphenes[i] = p;
         }
+        if (createPictureOfLayout)
+          config.PhosphenesToPicture();
         return config;
       }
+      
+      private void PhosphenesToPicture()
+      {
+        Debug.Log($"Avg Phosphene Size: {phosphenes.Select(p => p.size).Average():E}; Min: {phosphenes.Select(p => p.size).Min():E}; Max: {phosphenes.Select(p => p.size).Max():E}");
+        var tex = new Texture2D(1440, 1600, TextureFormat.RGBA32, false);
+        tex.SetPixels(0,0,tex.width,tex.height,Enumerable.Repeat(Color.black, tex.width*tex.height).ToArray());
 
+        foreach (var p in phosphenes)
+        {
+          var x = Mathf.RoundToInt(p.position.x * tex.width);
+          var y = Mathf.RoundToInt(p.position.y * tex.height);
+          var size = Mathf.RoundToInt(p.size * tex.width);
+          
+          var sigma = size * 2;
+          Func<float, float> Gaussian = d => 1.0f / (sigma * 2.50662f) * Mathf.Exp(-(d * d) / (2 * sigma * sigma));
+          var scale = Gaussian(0f);
+          
+          for (int rx = 0; rx < sigma*3; rx += 1)
+          {
+            for (int ry = 0; ry < sigma*3; ry += 1)
+            {
+              if (rx * rx + ry * ry > sigma*3 * sigma*3) break;
+
+              var d = Mathf.Sqrt(rx * rx + ry * ry);
+              var spread = Gaussian(d) / scale;
+              var col = new Color(spread, spread, spread, 1);
+              
+              tex.SetPixel(x+rx, y+ry, tex.GetPixel(x+rx, y+ry)+col);
+              tex.SetPixel(x+rx, y-ry, tex.GetPixel(x+rx, y-ry)+col);
+              tex.SetPixel(x-rx, y+ry, tex.GetPixel(x-rx, y+ry)+col);
+              tex.SetPixel(x-rx, y-ry, tex.GetPixel(x-rx, y-ry)+col);
+            }
+          }
+        }
+        tex.Apply();
+        var dirPath = Path.Join(Directory.GetParent(Application.dataPath)!.FullName,"SaveImages");
+        if(!Directory.Exists(dirPath)) {
+          Directory.CreateDirectory(dirPath);
+        }
+        Debug.Log($"Saving image in: {dirPath}" );
+        File.WriteAllBytes(Path.Join(dirPath, DateTime.Now.Ticks.ToString())+".png", tex.EncodeToPNG());
+      }
   }
 }
