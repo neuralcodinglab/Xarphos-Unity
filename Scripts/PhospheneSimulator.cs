@@ -31,7 +31,8 @@ namespace Xarphos.Scripts
         private bool _edgeDetection;
 
         private Vector2Int viveResolution, maskResolution;
-        protected RenderTextureDescriptor actvTexDesc, renderTexDesc;
+        // protected RenderTextureDescriptor ActvTexDesc;
+        protected RenderTexture ActvTex, SimRenderTex;
         [SerializeField] protected SurfaceReplacement.ReplacementModes surfaceReplacementMode;
         private readonly int _nSurfaceModes = Enum.GetValues(typeof(SurfaceReplacement.ReplacementModes)).Length;
 
@@ -163,32 +164,37 @@ namespace Xarphos.Scripts
           // if phosphene simulation is turned on
           if ((int)_phospheneFiltering != 0)
           {
-            var inputTex = RenderTexture.GetTemporary(src.descriptor);
-            Graphics.Blit(preTargetPing, inputTex);
-            RenderTexture.ReleaseTemporary(preTargetPing);
-            temporalDynamicsCs.SetTexture(kernelActivations, TempDynMask, inputTex);
+            temporalDynamicsCs.SetTexture(kernelActivations, TempDynMask, preTargetPing);
 
-            // temp for storing phosphenes activions
-            var actvTex = RenderTexture.GetTemporary(actvTexDesc);
-            // get temporary output texture for simulation
-            var simulationTex = RenderTexture.GetTemporary(renderTexDesc);
-
-            // pass texture references to compute shader
-            temporalDynamicsCs.SetTexture(kernelActivations, TempDynPhospheneTexture, actvTex);
-            temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneTexture, actvTex);
-            temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneRenderTexture, simulationTex);
-            
             // calculate activations
             temporalDynamicsCs.Dispatch(kernelActivations, Mathf.CeilToInt(_nPhosphenes / 32), 1, 1);
             // render phosphene simulation
             temporalDynamicsCs.Dispatch(kernelSpread, threadX, threadY, 1);
-            
+
+            if (Time.frameCount % 45 == -9)
+            {
+              var arr = new Phosphene[_nPhosphenes];
+              _phospheneBuffer.GetData(arr);
+              var actarrL = arr.Select(p => p.activation[0]).ToArray();
+              var actarrR = arr.Select(p => p.activation[1]).ToArray();
+              Debug.Log($"Left Activation: Avg: {actarrL.Average():E}; Min: {actarrL.Min():E}; Max: {actarrL.Max():E}; Above .5: {actarrL.Count(a => a>.5f)}");
+              Debug.Log($"Rght Activation: Avg: {actarrR.Average():E}; Min: {actarrR.Min():E}; Max: {actarrR.Max():E}; Above .5: {actarrR.Count(a => a>.5f)}");
+              var sz = arr.Select(p => p.size).ToArray();
+              Debug.Log($"Sizes: Avg: {sz.Average():E}; Min: {sz.Min():E}; Max: {sz.Max():E}");
+
+              var debug = new Vector2[viveResolution.x * viveResolution.y];
+              var a = debug.Select(v => v.x).ToArray();
+              var s = debug.Select(v => v.y).ToArray();
+              Debug.Log($"LActvTex::Activation: Avg: {a.Average():E}; Min: {a.Min():E}; Max: {a.Max():E}; Above .5: {a.Count(f => f>.5f)}");
+              Debug.Log($"LActvTex::Sizes     : Avg: {s.Average():E}; Min: {s.Min():E}; Max: {s.Max():E}; Above 1e-5: {s.Count(f => f>1e-5f)}");
+            }
+
             // reinit & copy simulation to pre-out
+            RenderTexture.ReleaseTemporary(preTargetPing);
             preTargetPing = RenderTexture.GetTemporary(target.descriptor);
-            Graphics.Blit(simulationTex, preTargetPing);
+            Graphics.Blit(SimRenderTex, preTargetPing, new Vector2(1, -1), Vector2.zero);
             // release temporaries. don't want memory leaks
-            RenderTexture.ReleaseTemporary(simulationTex);
-            RenderTexture.ReleaseTemporary(actvTex);
+            temporalDynamicsCs.Dispatch(kernelClean, threadX, threadY, 1);
           }
 
           // lastly render the focus dot on top
@@ -217,25 +223,29 @@ namespace Xarphos.Scripts
           // set up input texture for simulation
           var compressionFactor = 1;
           maskResolution = viveResolution / compressionFactor;
-          actvTexDesc = new RenderTextureDescriptor(maskResolution.x, maskResolution.y, src.graphicsFormat, 0, 0)
-            {
-              dimension = src.dimension,
-              vrUsage = src.descriptor.vrUsage,
-              volumeDepth = src.descriptor.volumeDepth,
-              enableRandomWrite = true
-            };
-
-
-          renderTexDesc = new RenderTextureDescriptor(src.width, src.height, src.graphicsFormat, src.depth, 0)
+          ActvTex = new RenderTexture(src.descriptor)
           {
-            dimension = src.dimension,
-            vrUsage = src.descriptor.vrUsage,
-            volumeDepth = src.descriptor.volumeDepth,
+            width = maskResolution.x,
+            height = maskResolution.y,
+            graphicsFormat = GraphicsFormat.R32G32_SFloat,
+            depth = 0,
+            enableRandomWrite = true
+          };
+          // pass texture references to compute shader
+          temporalDynamicsCs.SetTexture(kernelActivations, TempDynPhospheneTexture, ActvTex);
+          temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneTexture, ActvTex);
+          temporalDynamicsCs.SetTexture(kernelClean, TempDynPhospheneTexture, ActvTex);
+
+
+          SimRenderTex = new RenderTexture(src.descriptor)
+          {
             enableRandomWrite = true
           };
           // Initialize the render textures & Set the shaders with the shared render textures
           temporalDynamicsCs.SetInts(TempDynScreenResolution, viveResolution.x, viveResolution.y);  
           temporalDynamicsCs.SetInts(TempDynResolution, maskResolution.x, maskResolution.y);
+          temporalDynamicsCs.SetTexture(kernelSpread, TempDynPhospheneRenderTexture, SimRenderTex);
+          temporalDynamicsCs.SetTexture(kernelClean, TempDynPhospheneRenderTexture, SimRenderTex);
 
           // calculate the thread count necessary to cover the entire texture
           temporalDynamicsCs.GetKernelThreadGroupSizes(kernelSpread, out var xGroup, out var yGroup, out _);

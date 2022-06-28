@@ -150,6 +150,7 @@ namespace Xarphos.Scripts
           var ecc = validEcc[idx];
           config.eccentricities[i] = (float)ecc;
           var theta = Math.PI * 2 * randomVals[i + nPhosphenes];
+          config.azimuth_angles[i] = (float)theta;
           
           // calculate cartesian coordinates of phosphene in [0,1] ; eccentricities have fovea at 0,0
           // so move coordinates by 60 to and scale by 120 to get relative position
@@ -170,11 +171,14 @@ namespace Xarphos.Scripts
           // multiply apprx area with magnification factor of eccentricity to get diameter of phosphene in dVA
           // divide by 2 and 120 to get radius as fraction of total fov
           p.size = (float)(magnification * apprxSpreadRadius) / (2 * TotalFOV);
+          config.sizes[i] = p.size;
 
           config.phosphenes[i] = p;
         }
         if (createPictureOfLayout)
           config.PhosphenesToPicture();
+        
+        Debug.Log($"Size Info: Avg:{config.sizes.Average():E}; Min:{config.sizes.Min():E}; Max:{config.sizes.Max():E}");
         return config;
       }
       

@@ -30,9 +30,8 @@ float trace_decay;      // The factor by which the stimulation memory trace decr
 RWStructuredBuffer<Phosphene> phosphenes;
 
 Texture2DArray<float4> ActivationMask; // ToDo: Should probably be renamed to InputTex or StimulationTex
-RWTexture2DArray<float4> PhospheneTexture; // ToDo: Rename to ActivationTex
+RWTexture2DArray<unorm float2> PhospheneTexture; // ToDo: Rename to ActivationTex
 RWTexture2DArray<float4> PhospheneRender; // ToDo: SimulationTex? RenderTex?
-
 
 [numthreads(32,1,2)]
 void CalculateActivations (uint3 id : SV_DispatchThreadID)
@@ -75,7 +74,7 @@ void CalculateActivations (uint3 id : SV_DispatchThreadID)
   
   // calculate position on activation texture (can be different if input texture is a different size)
   uint2 idx = uint2((uint)(outputPosition.x * screenResolution.x), (uint)(outputPosition.y * screenResolution.y));
-  PhospheneTexture[uint3(idx, eyeIdx)] =  float4(actv, actv, actv, phosphenes[phosIdx].size);
+  PhospheneTexture[uint3(idx, eyeIdx)] =  float2(actv, phosphenes[phosIdx].size);
 }
 
 /**
@@ -98,15 +97,14 @@ float Gaussian(float d, float sigma)
 void SpreadActivations(uint3 id : SV_DispatchThreadID)
 {
   // get activation data from texture
-  float4 pixel = PhospheneTexture[uint3(id.xy, id.z)];
-  const float size = pixel.w;
+  float2 pixel = PhospheneTexture[id];
   const float actv = pixel.x;
+  const float size = pixel.y;
   // if it's a pixel without activation or radius, we are done
-  if (size < 0.001 || actv < 0.001) { return; }
+  if (size < 1e-5 || actv < 0.001) { return; }
 
   // write activation into output pixel
   PhospheneRender[uint3(id.xy, id.z)] = float4(actv, actv, actv, 1);
-
   // sigma is diameter, size is radius
   const float sigma = size * 2.0;
   // scale to normalise distribution on so that 0 distance has maximum activation (1 * actv)
@@ -148,5 +146,7 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
 void ClearActivations(uint3 id : SV_DispatchThreadID)
 {
   // reset the activation texture
-  PhospheneTexture[uint3(id.xy, id.z)] = float4(0,0,0,0);
+  PhospheneTexture[uint3(id.xy, id.z)] = float2(0,0);
+  // reset render texture
+  PhospheneRender[uint3(id.xy, id.z)] = float4(0,0,0,1);
 }
