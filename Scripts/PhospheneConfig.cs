@@ -113,7 +113,7 @@ namespace Xarphos.Scripts
         // create a probability distribution according to cortical magnification and literature approximations
         // custom probability distribution that goes from near-0 to max radius and is higher close to the fovea
         // since continuous distributions are a pain, we approximate with a binned discrete variant.
-        var validEcc = Generate.LinearSpaced(10000, 1e-7, maxEccentricity * TotalFOV);
+        var validEcc = Generate.LinearSpaced(10000, 1e-5, maxEccentricity * TotalFOV);
         
         // Thank you, EvK: https://stackoverflow.com/questions/43303538/python-numpy-random-choice-in-c-sharp-with-non-uniform-probability-distribution
         // apply cortical magnification weights (closer to fovea have higher weights, peripheral is less)
@@ -184,6 +184,9 @@ namespace Xarphos.Scripts
       
       private void PhosphenesToPicture()
       {
+        var xpos = phosphenes.Select(p => p.position.x).ToArray();
+        var ypos = phosphenes.Select(p => p.position.y).ToArray();
+        Debug.Log($"PosInfo: x-Range: {xpos.Min():F} - {xpos.Max():F}; y-Range: {ypos.Min():F} - {ypos.Max():F}");
         Debug.Log($"Avg Phosphene Size: {phosphenes.Select(p => p.size).Average():E}; Min: {phosphenes.Select(p => p.size).Min():E}; Max: {phosphenes.Select(p => p.size).Max():E}");
         var tex = new Texture2D(1440, 1600, TextureFormat.RGBA32, false);
         tex.SetPixels(0,0,tex.width,tex.height,Enumerable.Repeat(Color.black, tex.width*tex.height).ToArray());
