@@ -58,6 +58,8 @@ namespace Xarphos.Scripts
         private int kernelActivations, kernelSpread, kernelClean;
         private int threadX, threadY;
         private bool headsetInitialised = false;
+
+        private ComputeBuffer debugBuffer;
         
         // ToDo: Clean Up and unify
         #region Shader Properties Name-To-Int
@@ -109,7 +111,7 @@ namespace Xarphos.Scripts
             } catch (FileNotFoundException){ }
           }
           // if boolean is false, the file path is not given or the initialising from file failed, initialise probabilistic
-          _phosphenes ??= PhospheneConfig.InitPhosphenesProbabilistically(1000, .3f, PhospheneConfig.Monopole);
+          _phosphenes ??= PhospheneConfig.InitPhosphenesProbabilistically(1000, .15f, PhospheneConfig.Monopole, true);
           
           _nPhosphenes = _phosphenes.phosphenes.Length;
           _phospheneBuffer = new ComputeBuffer(_nPhosphenes, sizeof(float)*7);
@@ -171,7 +173,7 @@ namespace Xarphos.Scripts
             // render phosphene simulation
             temporalDynamicsCs.Dispatch(kernelSpread, threadX, threadY, 1);
 
-            if (Time.frameCount % 45 == -9)
+            if (Time.frameCount % 30 == -9)
             {
               var arr = new Phosphene[_nPhosphenes];
               _phospheneBuffer.GetData(arr);
@@ -182,18 +184,27 @@ namespace Xarphos.Scripts
               var sz = arr.Select(p => p.size).ToArray();
               Debug.Log($"Sizes: Avg: {sz.Average():E}; Min: {sz.Min():E}; Max: {sz.Max():E}");
 
-              var debug = new Vector2[viveResolution.x * viveResolution.y];
+              var debug = new Vector4[viveResolution.x * viveResolution.y];
+              temporalDynamicsCs.Dispatch(temporalDynamicsCs.FindKernel("DebugBuffer"), viveResolution.x / 32, viveResolution.y / 32, 1);
+              debugBuffer.GetData(debug);
+
+              // if read from render tex
               var a = debug.Select(v => v.x).ToArray();
-              var s = debug.Select(v => v.y).ToArray();
+              
+              // if read from  activation tex
+              // var xPos = debug.Select(v => v.x).ToArray();
+              // var yPos = debug.Select(v => v.y).ToArray();
+              // var a = debug.Select(v => v.z).ToArray();
+              // var s = debug.Select(v => v.w).Where(f => f > 0f).ToArray();
+              
               Debug.Log($"LActvTex::Activation: Avg: {a.Average():E}; Min: {a.Min():E}; Max: {a.Max():E}; Above .5: {a.Count(f => f>.5f)}");
-              Debug.Log($"LActvTex::Sizes     : Avg: {s.Average():E}; Min: {s.Min():E}; Max: {s.Max():E}; Above 1e-5: {s.Count(f => f>1e-5f)}");
+              // Debug.Log($"LActvTex::Sizes     : Avg: {s.Average():E}; Min: {s.Min():E}; Max: {s.Max():E}; Above 1e-5: {s.Count(f => f>1e-5f)}");
             }
 
             // reinit & copy simulation to pre-out
             RenderTexture.ReleaseTemporary(preTargetPing);
             preTargetPing = RenderTexture.GetTemporary(target.descriptor);
-            Graphics.Blit(SimRenderTex, preTargetPing, new Vector2(1, -1), Vector2.zero);
-            // release temporaries. don't want memory leaks
+            Graphics.Blit(SimRenderTex, preTargetPing);//, new Vector2(1, -1), Vector2.zero);
             temporalDynamicsCs.Dispatch(kernelClean, threadX, threadY, 1);
           }
 
@@ -257,6 +268,11 @@ namespace Xarphos.Scripts
           SetEyePosition(lViewSpace, rViewSpace, cViewSpace);
           temporalDynamicsCs.SetVector("_LeftEyeCenter", lViewSpace);
           temporalDynamicsCs.SetVector("_RightEyeCenter", rViewSpace);
+
+          debugBuffer = new ComputeBuffer(w * h, sizeof(float) * 4);
+          temporalDynamicsCs.SetBuffer(temporalDynamicsCs.FindKernel("DebugBuffer"), "debugBuffer", debugBuffer);
+          temporalDynamicsCs.SetTexture(temporalDynamicsCs.FindKernel("DebugBuffer"), TempDynPhospheneTexture, ActvTex);
+          temporalDynamicsCs.SetTexture(temporalDynamicsCs.FindKernel("DebugBuffer"), TempDynPhospheneRenderTexture, SimRenderTex);
         }
 
         /// <summary>
@@ -293,6 +309,7 @@ namespace Xarphos.Scripts
 
         private void OnDestroy(){
           _phospheneBuffer.Release();
+          debugBuffer.Release();
         }
 
         #region Input Handling

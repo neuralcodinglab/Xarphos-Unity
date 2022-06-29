@@ -2,6 +2,7 @@
 #pragma kernel CalculateActivations
 #pragma kernel SpreadActivations
 #pragma kernel ClearActivations
+#pragma kernel DebugBuffer
 
 
 struct Phosphene
@@ -32,6 +33,8 @@ RWStructuredBuffer<Phosphene> phosphenes;
 Texture2DArray<float4> ActivationMask; // ToDo: Should probably be renamed to InputTex or StimulationTex
 RWTexture2DArray<unorm float2> PhospheneTexture; // ToDo: Rename to ActivationTex
 RWTexture2DArray<float4> PhospheneRender; // ToDo: SimulationTex? RenderTex?
+
+RWStructuredBuffer<float4> debugBuffer;
 
 [numthreads(32,1,2)]
 void CalculateActivations (uint3 id : SV_DispatchThreadID)
@@ -103,8 +106,11 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
   // if it's a pixel without activation or radius, we are done
   if (size < 1e-5 || actv < 0.001) { return; }
 
+  // y-indexing seems to be flipped? if this is not done, image is wrong way round
+  float y_corr = screenResolution.y - 1 - id.y;
+
   // write activation into output pixel
-  PhospheneRender[uint3(id.xy, id.z)] = float4(actv, actv, actv, 1);
+  PhospheneRender[uint3(id.x, y_corr, id.z)] = float4(actv, actv, actv, 1);
   // sigma is diameter, size is radius
   const float sigma = size * 2.0;
   // scale to normalise distribution on so that 0 distance has maximum activation (1 * actv)
@@ -133,10 +139,10 @@ void SpreadActivations(uint3 id : SV_DispatchThreadID)
       float spread = actv * Gaussian(dist, sigma) / scale;
 
       // spread the activation to pixels (since we only iterate one radius, we are writing to all 4 quadrants)
-      PhospheneRender[uint3(id.x + xOff, id.y + yOff, id.z)] += float4(spread, spread, spread, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y + yOff, id.z)] += float4(spread, spread, spread, 0);
-      PhospheneRender[uint3(id.x + xOff, id.y - yOff, id.z)] += float4(spread, spread, spread, 0);
-      PhospheneRender[uint3(id.x - xOff, id.y - yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x + xOff, y_corr + yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x - xOff, y_corr + yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x + xOff, y_corr - yOff, id.z)] += float4(spread, spread, spread, 0);
+      PhospheneRender[uint3(id.x - xOff, y_corr - yOff, id.z)] += float4(spread, spread, spread, 0);
     }
   }
 }
@@ -149,4 +155,17 @@ void ClearActivations(uint3 id : SV_DispatchThreadID)
   PhospheneTexture[uint3(id.xy, id.z)] = float2(0,0);
   // reset render texture
   PhospheneRender[uint3(id.xy, id.z)] = float4(0,0,0,1);
+}
+
+[numthreads(32,32,1)]
+void DebugBuffer(uint3 id : SV_DispatchThreadID)
+{
+  // float2 pixel = PhospheneTexture[float3(id.xy, 0)];
+  // const float actv = pixel.x;
+  // const float size = pixel.y;
+  // // if it's a pixel without activation or radius, we are done
+  // debugBuffer[id.x + id.y * screenResolution.x] = float4(id.x, id.y, actv, size);
+
+  float4 pixel = PhospheneRender[id];
+  debugBuffer[id.x + id.y * screenResolution.x] = pixel;
 }

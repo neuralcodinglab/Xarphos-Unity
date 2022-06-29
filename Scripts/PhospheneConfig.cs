@@ -113,7 +113,7 @@ namespace Xarphos.Scripts
         // create a probability distribution according to cortical magnification and literature approximations
         // custom probability distribution that goes from near-0 to max radius and is higher close to the fovea
         // since continuous distributions are a pain, we approximate with a binned discrete variant.
-        var validEcc = Generate.LinearSpaced(10000, 1e-3, maxEccentricity * TotalFOV);
+        var validEcc = Generate.LinearSpaced(10000, 1e-7, maxEccentricity * TotalFOV);
         
         // Thank you, EvK: https://stackoverflow.com/questions/43303538/python-numpy-random-choice-in-c-sharp-with-non-uniform-probability-distribution
         // apply cortical magnification weights (closer to fovea have higher weights, peripheral is less)
