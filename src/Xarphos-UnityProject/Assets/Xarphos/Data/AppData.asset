@@ -1,0 +1,33 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 32
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 934ea02c4147b4909b5968fb45d10bd6, type: 3}
+  m_Name: AppData
+  m_EditorClassIdentifier: 
+  size_0: 0.004
+  framerate: 24
+  locked: 1
+  resolution: 50
+  magnification: 0
+  jitter: 0.5
+  state: 0
+  size_var: 0.5
+  intensity_var: 1
+  threshold_1: 30
+  threshold_2: 35
+  webcam: 0
+  brightness: 0.6
+  saturation: 0
+  dropout: 0.1
+  blur: 3
+  dilation: 1
+  requestedWidth: 240
+  requestedHeight: 240
