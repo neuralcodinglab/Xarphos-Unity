@@ -1,40 +1,50 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 
 
 namespace Xarphos.Scripts
 {
 
 
-public class SurfaceReplacement: MonoBehaviour
+public class SurfaceReplacement : MonoBehaviour
 {
-	public static Shader replacementShader = Shader.Find("Hidden/SurfaceReplacement");
+	public static Shader replacementShader = Shader.Find("Xarphos/SurfaceReplacement");
 
 	public enum ReplacementModes {
 		None = 0,
-		ObjectId = 1,
-		CatergoryId	= 2,
-		DepthCompressed	= 3,
-		DepthMultichannel	= 4,
-		Normals	= 5
+		Normals	= 1,
+		ObjectId = 2,
+		CatergoryId	= 3,
+		DepthCompressed	= 4,
+		DepthMultichannel	= 5
 	}
 
-	public static void ActivateReplacementShader(ReplacementModes replacementMode){
+
+	public static void ActivateReplacementShader(Camera target, ReplacementModes replacementMode){
+		if (replacementMode == ReplacementModes.None)
+		{
+			DeactivateReplacementShader(target);
+			return;
+		}
+		
 		// For rendering the object ID labels (instance segmentation)
-		var renderers = UnityEngine.Object.FindObjectsOfType<Renderer>();
+		var renderers = FindObjectsOfType<Renderer>();
 		var mpb = new MaterialPropertyBlock();
 		foreach (var r in renderers)
 		{
 			var id = r.gameObject.GetInstanceID();
+			var layer = r.gameObject.layer;
 			mpb.SetColor("_ObjectColor", EncodeIDAsColor(id));
+			mpb.SetColor("_CategoryColor", EncodeLayerAsColor(layer));
 			r.SetPropertyBlock(mpb);
 			mpb.SetInt("_OutputMode",(int)replacementMode);
 		}
 
-		Camera.main.SetReplacementShader(replacementShader, "");
+		target.SetReplacementShader(replacementShader, "");
 	}
 
-	public static void DeactivateReplacementShader(){
-		Camera.main.ResetReplacementShader();
+	public static void DeactivateReplacementShader(Camera target){
+		target.ResetReplacementShader();
 	}
 
 	public static byte ReverseBits(byte value)
