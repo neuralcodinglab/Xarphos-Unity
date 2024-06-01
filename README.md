@@ -26,3 +26,4 @@ Importing the source code as package is recommended. Nevertheless the raw projec
 ### Remarks
 
 - VR development: the currently included versions use the webcam/phonecam as input for the simulations. If you want to adapt the simulation for virtual environments, you can replace the WebCamTexture with a RenderTexture that receives input from a virtual camera.
+- This repository is not actively maintained and the main branch mostly contains some older code for basic simulations. Other branches contain some experimental scripts that have been used for different projects. 
